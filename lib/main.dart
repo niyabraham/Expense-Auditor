@@ -1,9 +1,10 @@
-import 'dart:convert'; // For json encoding/decoding
-import 'package:http/http.dart' as http; // For the manual API call
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:expense_auditor/policy_data.dart'; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,6 +44,8 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   late Future<List<Map<String, dynamic>>> _claimsFuture;
+  PlatformFile? _pickedFile;
+  bool _isUploading = false;
 
   @override
   void initState() {
@@ -50,77 +53,210 @@ class _DashboardPageState extends State<DashboardPage> {
     _refreshClaims();
   }
 
+  // --- UPGRADE 1: Sort by Risk Level (Feature 4 Expectation) ---
   void _refreshClaims() {
     setState(() {
       _claimsFuture = Supabase.instance.client
           .from('claims')
           .select()
-          .order('created_at', ascending: false);
+          .then((data) {
+            final List<Map<String, dynamic>> claimsList = List<Map<String, dynamic>>.from(data);
+            claimsList.sort((a, b) {
+              int getPriority(String? status) {
+                switch (status?.toLowerCase()) {
+                  case 'rejected': return 1;
+                  case 'flagged': return 2;
+                  case 'approved': return 3;
+                  default: return 4;
+                }
+              }
+              return getPriority(a['status']).compareTo(getPriority(b['status']));
+            });
+            return claimsList;
+          });
     });
   }
 
-  // --- AI AUDIT LOGIC ---
-  Future<Map<String, String>> _getAIVerdict(String merchant, double amount, String reason) async {
-    final apiKey = dotenv.env['GEMINI_API_KEY'];
+  // --- UPGRADE 2: Human-in-the-loop database override ---
+  Future<void> _updateClaimStatus(String claimId, String newStatus, String auditorComment) async {
+    try {
+      await Supabase.instance.client
+          .from('claims')
+          .update({
+            'status': newStatus,
+            'audit_reason': 'Human Auditor Override: $auditorComment',
+          })
+          .eq('id', claimId); // Ensure your Supabase table has an 'id' primary key
+
+      _refreshClaims();
+      if (mounted) Navigator.pop(context); // Close dialog
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Status manually overridden by Auditor!')),
+      );
+    } catch (e) {
+      debugPrint("Override Error: $e");
+    }
+  }
+
+  void _showPolicyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.description, color: Colors.blue),
+            SizedBox(width: 10),
+            Text("Aetheris Policy Manual"),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Text(
+              AetherisPolicy.fullText,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickReceipt() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
     
-    // 1. TRY THE ACTUAL API
+    if (result != null) {
+      setState(() {
+        _pickedFile = result.files.first;
+      });
+    }
+  }
+
+  Future<String?> _uploadToSupabase() async {
+    if (_pickedFile == null) return null;
+    try {
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${_pickedFile!.name}';
+      final fileBytes = _pickedFile!.bytes;
+      if (fileBytes == null) return null;
+
+      await Supabase.instance.client.storage
+          .from('receipts')
+          .uploadBinary(fileName, fileBytes);
+
+      return Supabase.instance.client.storage.from('receipts').getPublicUrl(fileName);
+    } catch (e) {
+      debugPrint("Upload Error: $e");
+      return null;
+    }
+  }
+
+  // --- UPGRADE 3: Multimodal RAG (Reads Text and image binary simultaneously) ---
+  Future<Map<String, String>> _getAIVerdict(String merchant, double amount, String reason, PlatformFile? receiptFile) async {
+    const String apiKey = "AIzaSyBAgm8rAdezm0eBORpM7VAVgr8eP-7nkms";
+    final policyKnowledge = AetherisPolicy.fullText;
+    
+    String? base64Image;
+    if (receiptFile != null && receiptFile.bytes != null) {
+      base64Image = base64Encode(receiptFile.bytes!);
+    }
+
+    final prompt = '''
+    You are the Aetheris Global AI Auditor. 
+    Use the following POLICY MANUAL and the attached physical receipt image to audit the expense:
+    
+    [POLICY MANUAL]
+    $policyKnowledge
+    
+    [USER TYPED SUBMISSION]
+    Merchant: $merchant
+    Amount: \$$amount
+    Justification: $reason
+    
+    INSTRUCTIONS:
+    1. Check if the user typed Merchant and Amount match the text printed on the Physical Receipt image. If they do not match, REJECT the claim and explain the mismatch.
+    2. If an expense exceeds limits in Article IV, VI, or VIII, set Status to REJECTED.
+    3. If an expense is on a weekend, set Status to FLAGGED.
+    4. You MUST cite the specific Article and Section from the manual.
+    
+    RESPONSE FORMAT (Strict):
+    Status: [STATUS]
+    Reason: [Article X, Section Y: explanation]
+    ''';
+
+    List<Map<String, dynamic>> parts = [
+      {'text': prompt}
+    ];
+
+    if (base64Image != null) {
+      parts.add({
+        'inlineData': {
+          'mimeType': 'image/png',
+          'data': base64Image
+        }
+      });
+    }
+
     try {
       final url = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$apiKey'
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey'
       );
 
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'contents': [{'parts': [{'text': "Audit this: $merchant, \$$amount, $reason. Rules: Food < \$20, Travel < \$500. Respond with 'Status: [STATUS]' and 'Reason: [REASON]'"}]}]
+          'contents': [{ 'parts': parts }]
         }),
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 25)); // Higher timeout for image packet
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final String text = data['candidates'][0]['content']['parts'][0]['text'];
+        
+        final bool isApproved = text.toUpperCase().contains('APPROVED');
+        final bool isFlagged = text.toUpperCase().contains('FLAGGED');
+        
+        String reasonText = "Audit complete.";
+        if (text.contains('Reason:')) {
+          reasonText = text.substring(text.indexOf('Reason:') + 7).trim();
+        } else {
+          reasonText = text.trim();
+        }
+
         return {
-          'status': text.toUpperCase().contains('APPROVED') ? 'approved' : 'rejected',
-          'reason': text.split('Reason:').last.trim(),
+          'status': isApproved ? 'approved' : (isFlagged ? 'flagged' : 'rejected'),
+          'reason': reasonText,
         };
+      } else {
+        return {'status': 'flagged', 'reason': 'Server Error Code: ${response.statusCode}'};
       }
     } catch (e) {
-      debugPrint("API failed, switching to Local Logic: $e");
+      return {'status': 'flagged', 'reason': 'Exception Error: ${e.toString()}'};
     }
-
-    // 2. FALLBACK: LOCAL AUDIT ENGINE (This will work even without internet!)
-    String status = 'approved';
-    String auditReason = 'Verified by Local Policy Engine.';
-
-    if (amount > 500) {
-      status = 'flagged';
-      auditReason = 'High value expense flagged for manual manager review.';
-    } else if (merchant.toLowerCase().contains('starbucks') || merchant.toLowerCase().contains('cafe')) {
-      if (amount > 20) {
-        status = 'rejected';
-        auditReason = 'Daily meal allowance of \$20 exceeded.';
-      }
-    } else if (reason.toLowerCase().contains('personal') || reason.toLowerCase().contains('gift')) {
-      status = 'rejected';
-      auditReason = 'Personal expenses are not reimbursable per company policy.';
-    }
-
-    return {'status': status, 'reason': auditReason};
   }
 
-  // Logic to send the new claim to Supabase
   Future<void> _submitClaim(String merchant, double amount, String justification) async {
+    setState(() => _isUploading = true);
     try {
-      // Show loading snackbar so the user knows AI is "thinking"
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI Auditor is analyzing...'), duration: Duration(seconds: 2)),
+        const SnackBar(content: Text('Uploading and auditing...')),
       );
 
-      // 1. Get the AI Verdict first
-      final verdict = await _runAIAudit(merchant, amount, justification);
+      final imageUrl = await _uploadToSupabase();
+      
+      // We pass _pickedFile to the AI logic so it can read binary bytes!
+      final verdict = await _getAIVerdict(merchant, amount, justification, _pickedFile);
 
-      // 2. Insert into Supabase with the AI's decision
       await Supabase.instance.client.from('claims').insert({
         'merchant_name': merchant,
         'amount': amount,
@@ -128,100 +264,145 @@ class _DashboardPageState extends State<DashboardPage> {
         'currency': 'USD',
         'status': verdict['status'],
         'audit_reason': verdict['reason'],
+        'image_url': imageUrl,
       });
       
       _refreshClaims();
+      setState(() {
+        _pickedFile = null;
+        _isUploading = false;
+      });
       if (mounted) Navigator.pop(context);
     } catch (e) {
+      setState(() => _isUploading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
     }
   }
 
-  // Helper for actual execution (calling the verdict function)
-  Future<Map<String, String>> _runAIAudit(String merchant, double amount, String reason) async {
-    return await _getAIVerdict(merchant, amount, reason);
-  }
-
   void _showAddExpenseForm() {
     final merchantController = TextEditingController();
     final amountController = TextEditingController();
     final justificationController = TextEditingController();
+    _pickedFile = null;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true, 
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom, 
-          left: 20, right: 20, top: 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Submit New Expense', 
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: merchantController, 
-              decoration: const InputDecoration(labelText: 'Merchant (e.g., Uber, Amazon)'),
-            ),
-            TextField(
-              controller: amountController, 
-              decoration: const InputDecoration(labelText: 'Amount'), 
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            TextField(
-              controller: justificationController, 
-              decoration: const InputDecoration(labelText: 'Business Reason'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                final amount = double.tryParse(amountController.text) ?? 0.0;
-                if (merchantController.text.isNotEmpty && amount > 0) {
-                  _submitClaim(merchantController.text, amount, justificationController.text);
-                }
-              },
-              child: const Text('Submit for AI Audit'),
-            ),
-            const SizedBox(height: 30),
-          ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom, 
+            left: 20, right: 20, top: 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Submit New Expense', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+              TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
+              TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+              TextField(controller: justificationController, decoration: const InputDecoration(labelText: 'Business Reason')),
+              const SizedBox(height: 15),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _pickReceipt();
+                  setModalState(() {}); 
+                },
+                icon: const Icon(Icons.image),
+                label: Text(_pickedFile == null ? 'Upload Receipt Image' : 'File: ${_pickedFile!.name}'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isUploading ? null : () {
+                  final amount = double.tryParse(amountController.text) ?? 0.0;
+                  if (merchantController.text.isNotEmpty && amount > 0) {
+                    _submitClaim(merchantController.text, amount, justificationController.text);
+                  }
+                },
+                child: _isUploading ? const CircularProgressIndicator() : const Text('Submit for AI Audit'),
+              ),
+              const SizedBox(height: 30),
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _showAuditDetails(Map<String, dynamic> claim) {
+    String selectedStatus = claim['status'] ?? 'flagged';
+    final commentController = TextEditingController();
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(claim['merchant_name'] ?? 'Claim Detail'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Justification:', style: TextStyle(fontWeight: FontWeight.bold)),
-            Text(claim['justification'] ?? 'No justification provided.'),
-            const SizedBox(height: 16),
-            const Text('AI Auditor Verdict:', style: TextStyle(fontWeight: FontWeight.bold)),
-            Text(
-              claim['audit_reason'] ?? 'Pending AI review...',
-              style: const TextStyle(color: Colors.blueGrey, fontStyle: FontStyle.italic),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(claim['merchant_name'] ?? 'Claim Detail'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (claim['image_url'] != null) ...[
+                  const Text('Receipt Evidence:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      claim['image_url'],
+                      loadingBuilder: (context, child, progress) => 
+                        progress == null ? child : const Center(child: CircularProgressIndicator()),
+                      errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, size: 50),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                const Text('Justification:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(claim['justification'] ?? 'No justification provided.'),
+                const SizedBox(height: 16),
+                const Text('AI Auditor Verdict:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  claim['audit_reason'] ?? 'Pending AI review...',
+                  style: const TextStyle(color: Colors.blueGrey, fontStyle: FontStyle.italic),
+                ),
+                const Divider(height: 40),
+
+                // --- HUMAN OVERRIDE (Auditor Management Feature) ---
+                const Text('Human Auditor Override:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  value: selectedStatus,
+                  isExpanded: true,
+                  items: ['approved', 'flagged', 'rejected'].map((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value.toUpperCase()),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setDialogState(() => selectedStatus = value!);
+                  },
+                ),
+                TextField(
+                  controller: commentController,
+                  decoration: const InputDecoration(labelText: 'Custom Auditor Review Comments'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              onPressed: () {
+                _updateClaimStatus(claim['id'].toString(), selectedStatus, commentController.text);
+              }, 
+              child: const Text('Apply Manual Override', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-        ],
       ),
     );
   }
@@ -240,53 +421,40 @@ class _DashboardPageState extends State<DashboardPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Finance Audit Dashboard'),
-        centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            onPressed: _showPolicyDialog,
+          ),
           IconButton(onPressed: _refreshClaims, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _claimsFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
           if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('No claims found.'));
 
           final claims = snapshot.data!;
-
           return ListView.builder(
             itemCount: claims.length,
             itemBuilder: (context, index) {
               final claim = claims[index];
               final status = claim['status'] ?? 'pending';
 
-              return InkWell(
-                onTap: () => _showAuditDetails(claim),
-                child: Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: _getStatusColor(status).withOpacity(0.2),
-                      child: Icon(Icons.receipt, color: _getStatusColor(status)),
-                    ),
-                    title: Text(
-                      claim['merchant_name'] ?? 'Unknown Merchant',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text('${claim['currency']} ${claim['amount']}'),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(status),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        status.toUpperCase(),
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ),
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: ListTile(
+                  onTap: () => _showAuditDetails(claim),
+                  leading: CircleAvatar(
+                    backgroundColor: _getStatusColor(status).withOpacity(0.2),
+                    child: Icon(Icons.receipt, color: _getStatusColor(status)),
+                  ),
+                  title: Text(claim['merchant_name'] ?? 'Unknown Merchant', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('${claim['currency']} ${claim['amount']}'),
+                  trailing: Chip(
+                    label: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10)),
+                    backgroundColor: _getStatusColor(status),
                   ),
                 ),
               );
