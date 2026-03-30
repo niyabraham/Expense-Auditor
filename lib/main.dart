@@ -5,7 +5,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:expense_auditor/policy_data.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -99,16 +98,11 @@ class _LoginPageState extends State<LoginPage> {
       }
     } catch (e) {
       if (mounted) {
-        // THIS WILL NOW SHOW THE EXACT DATABASE ERROR ON THE SCREEN
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("ERROR: $e"), 
-            backgroundColor: Colors.red, 
-            duration: const Duration(seconds: 8) // Stays longer so you can read it
-          ),
+          SnackBar(content: Text("Login Error: $e"), backgroundColor: Colors.red, duration: const Duration(seconds: 5)),
         );
       }
-    }finally {
+    } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -209,22 +203,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
-  Future<void> _submitClaim(String merchant, double amount, String justification) async {
+  // --- LOCATION-AWARE HTTP AI CALL ---
+  Future<void> _submitClaim(String merchant, double amount, String location, String justification) async {
     setState(() => _isUploading = true);
     try {
-      // 1. Upload Receipt Image to Supabase
+      // 1. Upload to Supabase
       final imageUrl = await _uploadToSupabase();
       final userId = Supabase.instance.client.auth.currentUser!.id;
       
-      // 2. Initialize Gemini AI
-      final apiKey = dotenv.env['GEMINI_API_KEY'];
-      if (apiKey == null || apiKey.isEmpty) throw Exception('Gemini API Key missing in .env');
-      final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
+      // 2. Fetch API Key
+      final apiKey = dotenv.env['GROQ_API_KEY'];
+      if (apiKey == null || apiKey.isEmpty) throw Exception('API Key missing in .env file');
 
-      // 3. Create the Prompt for the AI Auditor
       final prompt = '''
-      You are an expert Corporate Finance Auditor for Aetheris.
-      Review the following expense claim against the company policy.
+      You are an emotionless, strict Corporate Finance Auditor for Aetheris. You do not make exceptions. You enforce mathematical limits ruthlessly.
       
       COMPANY POLICY:
       ${AetherisPolicy.fullText}
@@ -232,37 +224,76 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       CLAIM DETAILS:
       Merchant: $merchant
       Amount: $amount USD
+      Location: $location
       Justification: $justification
       
-      Analyze the details and the provided receipt image. 
-      Respond ONLY with a valid JSON object containing two keys:
-      1. "status": Must be exactly "approved", "flagged", or "rejected".
-      2. "reason": A single, clear sentence explaining the decision citing the policy rule.
+      EVALUATION RULES:
+      1. Determine the exact maximum numerical limit for the specified Location based on the policy.
+      2. Compare the Claim Amount ($amount) to that limit.
+      3. If the Claim Amount is strictly greater than the limit, the claim is a violation. Justifications do not override limits.
+      
+      Respond ONLY with a valid JSON object. You MUST output the "reason" BEFORE the "status" to show your math:
+      {
+        "reason": "Explicitly state the policy limit for the location and mathematically compare it to the claim amount.",
+        "status": "approved, flagged, or rejected"
+      }
       ''';
 
-      // 4. Send Text AND Image to Gemini
-      final content = [
-        Content.multi([
-          TextPart(prompt),
-          if (_pickedFile != null && _pickedFile!.bytes != null)
-            DataPart('image/jpeg', _pickedFile!.bytes!) // Sends image directly to AI
-        ])
-      ];
+      // 3. Encode Image to Base64
+      String base64Image = "";
+      if (_pickedFile != null && _pickedFile!.bytes != null) {
+        base64Image = base64Encode(_pickedFile!.bytes!);
+      }
 
-      final response = await model.generateContent(content);
+      // 4. Send HTTP REST Request to Groq 
+      final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
       
-      // 5. Parse the JSON response
-      final responseText = response.text?.replaceAll('```json', '').replaceAll('```', '').trim() ?? '{}';
+      final aiResponse = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {"type": "text", "text": prompt},
+                if (base64Image.isNotEmpty)
+                  {
+                    "type": "image_url",
+                    "image_url": {
+                      "url": "data:image/jpeg;base64,$base64Image"
+                    }
+                  }
+              ]
+            }
+          ],
+          "response_format": {"type": "json_object"},
+          "temperature": 0.1
+        }),
+      );
+
+      if (aiResponse.statusCode != 200) {
+        throw Exception("API Error ${aiResponse.statusCode}: ${aiResponse.body}");
+      }
+
+      // 5. Parse the JSON Response
+      final responseData = jsonDecode(aiResponse.body);
+      final responseText = responseData['choices'][0]['message']['content'];
       final aiResult = jsonDecode(responseText);
       
       final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
       final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
 
-      // 6. Save the final verdict to Supabase
+      // 6. Save to Database with Location
       await Supabase.instance.client.from('claims').insert({
         'employee_id': userId,
         'merchant_name': merchant,
         'amount': amount,
+        'location': location,
         'justification': justification,
         'currency': 'USD',
         'status': status,
@@ -277,13 +308,18 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     } catch (e) {
       debugPrint("Submission Error: $e");
       setState(() => _isUploading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red, duration: const Duration(seconds: 6))
+        );
+      }
     }
   }
 
   void _showAddExpenseForm() {
     final merchantController = TextEditingController();
     final amountController = TextEditingController();
+    final locationController = TextEditingController(); // NEW Location Controller
     final justificationController = TextEditingController();
     
     showModalBottomSheet(
@@ -298,6 +334,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               const Text('Submit New Expense', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
               TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+              TextField(controller: locationController, decoration: const InputDecoration(labelText: 'City / Location (e.g., London, Kochi)')), // NEW Location Field
               TextField(controller: justificationController, decoration: const InputDecoration(labelText: 'Justification')),
               const SizedBox(height: 15),
               OutlinedButton.icon(
@@ -309,9 +346,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               ElevatedButton(
                 onPressed: _isUploading ? null : () {
                   final amt = double.tryParse(amountController.text) ?? 0.0;
-                  _submitClaim(merchantController.text, amt, justificationController.text);
+                  _submitClaim(merchantController.text, amt, locationController.text, justificationController.text);
                 },
-                child: _isUploading ? const CircularProgressIndicator() : const Text("Submit to AI"),
+                child: _isUploading ? const CircularProgressIndicator() : const Text("Submit to AI Auditor"),
               ),
               const SizedBox(height: 20),
             ],
@@ -559,11 +596,12 @@ class AuditDetailView extends StatelessWidget {
           const SizedBox(height: 12),
           _infoRow("Merchant", claim['merchant_name']),
           _infoRow("Amount", "${claim['currency']} ${claim['amount']}"),
+          _infoRow("Location", claim['location'] ?? 'Not Specified'), // NEW Location Row
           _infoRow("Justification", claim['justification'] ?? 'N/A'),
           
           const Divider(height: 40),
           
-          const Text("AI Policy Context & Verification", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+          const Text("AI Policy Context & Verification", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(16),
