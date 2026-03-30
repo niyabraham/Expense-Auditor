@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:expense_auditor/policy_data.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,26 +28,151 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Aetheris Expense Auditor',
       theme: ThemeData(
-        useMaterial3: true, 
-        colorSchemeSeed: Colors.blue,
-        // FIXED: Changed CardTheme to CardThemeData
-        cardTheme: const CardThemeData(elevation: 2),
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0A2342),
+          secondary: const Color(0xFF1768E3),
+        ),
+        appBarTheme: const AppBarTheme(
+          centerTitle: false,
+          elevation: 0,
+          backgroundColor: Color(0xFF0A2342),
+          foregroundColor: Colors.white,
+        ),
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
       ),
-      home: const DashboardPage(),
+      home: const LoginPage(),
     );
   }
 }
 
-class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+// --- 1. LOGIN SCREEN ---
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
 
   @override
-  State<DashboardPage> createState() => _DashboardPageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
-  late Future<List<Map<String, dynamic>>> _claimsFuture;
-  int _currentIndex = 0; // 0 = Employee Portal, 1 = Auditor Dashboard
+class _LoginPageState extends State<LoginPage> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _handleLogin() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter email and password")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      final user = res.user;
+      if (user != null) {
+        final profileData = await Supabase.instance.client
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+
+        final String role = profileData['role'];
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => role == 'admin' 
+                  ? const AuditorDashboard() 
+                  : const EmployeeDashboard(),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        // THIS WILL NOW SHOW THE EXACT DATABASE ERROR ON THE SCREEN
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("ERROR: $e"), 
+            backgroundColor: Colors.red, 
+            duration: const Duration(seconds: 8) // Stays longer so you can read it
+          ),
+        );
+      }
+    }finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      body: Center(
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20)],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.account_balance_wallet, size: 64, color: Color(0xFF0A2342)),
+              const SizedBox(height: 16),
+              const Text("Aetheris Auditor", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              const Text("Corporate Single Sign-On", style: TextStyle(color: Colors.grey)),
+              const SizedBox(height: 32),
+              TextField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: "Corporate Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1768E3), foregroundColor: Colors.white),
+                  onPressed: _isLoading ? null : _handleLogin,
+                  child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Secure Login"),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// --- 2. EMPLOYEE DASHBOARD ---
+class EmployeeDashboard extends StatefulWidget {
+  const EmployeeDashboard({super.key});
+
+  @override
+  State<EmployeeDashboard> createState() => _EmployeeDashboardState();
+}
+
+class _EmployeeDashboardState extends State<EmployeeDashboard> {
+  late Future<List<Map<String, dynamic>>> _myClaimsFuture;
   bool _isUploading = false;
   PlatformFile? _pickedFile;
 
@@ -57,40 +183,16 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _refreshClaims() {
+    final userId = Supabase.instance.client.auth.currentUser!.id;
     setState(() {
-      _claimsFuture = Supabase.instance.client
+      _myClaimsFuture = Supabase.instance.client
           .from('claims')
           .select()
+          .eq('employee_id', userId)
           .order('created_at', ascending: false);
     });
   }
 
-  // --- DATABASE RESET ---
-  Future<void> _resetAllClaims() async {
-    try {
-      await Supabase.instance.client.from('claims').delete().not('id', 'is', null);
-      _refreshClaims();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Database Reset Successful'), backgroundColor: Colors.green),
-        );
-      }
-    } catch (e) {
-      debugPrint("Reset Error: $e");
-    }
-  }
-
-  // --- UI COMPONENT: STATUS COLORS ---
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'approved': return Colors.green.shade700;
-      case 'rejected': return Colors.red.shade700;
-      case 'flagged': return Colors.orange.shade800;
-      default: return Colors.blueGrey;
-    }
-  }
-
-  // --- SUBMISSION LOGIC ---
   Future<void> _pickReceipt() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: false);
     if (result != null) setState(() => _pickedFile = result.files.first);
@@ -110,163 +212,73 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _submitClaim(String merchant, double amount, String justification) async {
     setState(() => _isUploading = true);
     try {
+      // 1. Upload Receipt Image to Supabase
       final imageUrl = await _uploadToSupabase();
-      // Note: You would call your AI verdict function here like in your previous version
+      final userId = Supabase.instance.client.auth.currentUser!.id;
       
+      // 2. Initialize Gemini AI
+      final apiKey = dotenv.env['GEMINI_API_KEY'];
+      if (apiKey == null || apiKey.isEmpty) throw Exception('Gemini API Key missing in .env');
+      final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
+
+      // 3. Create the Prompt for the AI Auditor
+      final prompt = '''
+      You are an expert Corporate Finance Auditor for Aetheris.
+      Review the following expense claim against the company policy.
+      
+      COMPANY POLICY:
+      ${AetherisPolicy.fullText}
+      
+      CLAIM DETAILS:
+      Merchant: $merchant
+      Amount: $amount USD
+      Justification: $justification
+      
+      Analyze the details and the provided receipt image. 
+      Respond ONLY with a valid JSON object containing two keys:
+      1. "status": Must be exactly "approved", "flagged", or "rejected".
+      2. "reason": A single, clear sentence explaining the decision citing the policy rule.
+      ''';
+
+      // 4. Send Text AND Image to Gemini
+      final content = [
+        Content.multi([
+          TextPart(prompt),
+          if (_pickedFile != null && _pickedFile!.bytes != null)
+            DataPart('image/jpeg', _pickedFile!.bytes!) // Sends image directly to AI
+        ])
+      ];
+
+      final response = await model.generateContent(content);
+      
+      // 5. Parse the JSON response
+      final responseText = response.text?.replaceAll('```json', '').replaceAll('```', '').trim() ?? '{}';
+      final aiResult = jsonDecode(responseText);
+      
+      final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
+      final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
+
+      // 6. Save the final verdict to Supabase
       await Supabase.instance.client.from('claims').insert({
+        'employee_id': userId,
         'merchant_name': merchant,
         'amount': amount,
         'justification': justification,
         'currency': 'USD',
-        'status': 'flagged', // Defaulting for demo, replace with AI verdict
+        'status': status,
+        'audit_reason': reason,
         'image_url': imageUrl,
       });
       
       _refreshClaims();
       setState(() { _pickedFile = null; _isUploading = false; });
       if (mounted) Navigator.pop(context);
+      
     } catch (e) {
+      debugPrint("Submission Error: $e");
       setState(() => _isUploading = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
     }
-  }
-
-  // --- 1. VIEW: EMPLOYEE PORTAL ---
-  Widget _buildEmployeePortal(List<Map<String, dynamic>> claims) {
-    return Column(
-      children: [
-        _buildStatsBar(claims),
-        Expanded(
-          child: ListView.builder(
-            itemCount: claims.length,
-            itemBuilder: (context, i) => _buildClaimTile(claims[i]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- 2. VIEW: AUDITOR HOME PAGE ---
-  Widget _buildAuditorHome(List<Map<String, dynamic>> claims) {
-    List<Map<String, dynamic>> sorted = List.from(claims);
-    sorted.sort((a, b) {
-      int p(s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
-      return p(a['status']).compareTo(p(b['status']));
-    });
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text("Pending Audit Queue", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: sorted.length,
-            itemBuilder: (context, i) => _buildClaimTile(sorted[i]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- 3. VIEW: AUDIT DETAIL VIEW (Full Screen Comparison) ---
-  void _openAuditDetail(Map<String, dynamic> claim) {
-    Navigator.push(context, MaterialPageRoute(builder: (context) => Scaffold(
-      appBar: AppBar(title: const Text("Audit Evidence Detail")),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            if (claim['image_url'] != null)
-              Container(
-                height: 350,
-                width: double.infinity,
-                color: Colors.black,
-                child: Image.network(claim['image_url'], fit: BoxFit.contain),
-              ),
-            Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _detailHeading("Extracted Data"),
-                  Text("Merchant: ${claim['merchant_name']}\nAmount: ${claim['currency']} ${claim['amount']}"),
-                  const Divider(height: 32),
-                  _detailHeading("AI Policy Citation"),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8)),
-                    child: Text(claim['audit_reason'] ?? "AI Analyzing Policy Article IV...", style: const TextStyle(fontStyle: FontStyle.italic)),
-                  ),
-                  const Divider(height: 32),
-                  _detailHeading("Submission Justification"),
-                  Text(claim['justification'] ?? "N/A"),
-                  const SizedBox(height: 40),
-                  if (_currentIndex == 1) _buildAuditorControls(claim),
-                ],
-              ),
-            )
-          ],
-        ),
-      ),
-    )));
-  }
-
-  // --- UI HELPERS ---
-  Widget _detailHeading(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text(text.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue, fontSize: 12)),
-  );
-
-  Widget _buildClaimTile(Map<String, dynamic> claim) {
-    final status = claim['status'] ?? 'pending';
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: ListTile(
-        onTap: () => _openAuditDetail(claim),
-        leading: Icon(Icons.receipt_long, color: _getStatusColor(status)),
-        title: Text(claim['merchant_name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text("${claim['currency']} ${claim['amount']}"),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(color: _getStatusColor(status), borderRadius: BorderRadius.circular(4)),
-          child: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatsBar(List<Map<String, dynamic>> claims) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      color: Colors.blue.shade50,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _statCircle("Total", claims.length.toString(), Colors.blue),
-          _statCircle("Flagged", claims.where((c) => c['status'] == 'flagged').length.toString(), Colors.orange),
-          _statCircle("Approved", claims.where((c) => c['status'] == 'approved').length.toString(), Colors.green),
-        ],
-      ),
-    );
-  }
-
-  Widget _statCircle(String label, String val, Color col) => Column(
-    children: [
-      Text(val, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: col)),
-      Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-    ],
-  );
-
-  Widget _buildAuditorControls(Map<String, dynamic> claim) {
-    return Row(
-      children: [
-        Expanded(child: ElevatedButton(onPressed: () {}, child: const Text("Approve"))),
-        const SizedBox(width: 10),
-        Expanded(child: OutlinedButton(onPressed: () {}, child: const Text("Reject / Flag"))),
-      ],
-    );
   }
 
   void _showAddExpenseForm() {
@@ -313,30 +325,301 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentIndex == 0 ? "Employee Portal" : "Auditor Dashboard"),
+        title: const Text("My Expenses"),
         actions: [
-          IconButton(icon: const Icon(Icons.delete_forever, color: Colors.red), onPressed: _resetAllClaims),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _refreshClaims),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+            },
+          )
         ],
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _claimsFuture,
+        future: _myClaimsFuture,
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          return _currentIndex == 0 ? _buildEmployeePortal(snapshot.data!) : _buildAuditorHome(snapshot.data!);
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No expenses submitted yet."));
+          
+          final claims = snapshot.data!;
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: claims.length,
+            itemBuilder: (context, i) {
+              final claim = claims[i];
+              final status = claim['status'] ?? 'pending';
+              Color statusColor = status == 'approved' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
+              
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ExpansionTile(
+                  leading: CircleAvatar(backgroundColor: statusColor.withOpacity(0.2), child: Icon(Icons.receipt, color: statusColor)),
+                  title: Text(claim['merchant_name'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text("${claim['currency']} ${claim['amount']}"),
+                  trailing: Chip(
+                    label: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10)),
+                    backgroundColor: statusColor,
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline, size: 20, color: Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text("AI / Auditor Note: ${claim['audit_reason'] ?? 'Pending review'}", style: const TextStyle(fontStyle: FontStyle.italic))),
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              );
+            },
+          );
         },
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "My Claims"),
-          BottomNavigationBarItem(icon: Icon(Icons.admin_panel_settings), label: "Audit Queue"),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddExpenseForm,
+        icon: const Icon(Icons.add_a_photo),
+        label: const Text("Scan Receipt"),
+      ),
+    );
+  }
+}
+
+// --- 3. AUDITOR DASHBOARD ---
+class AuditorDashboard extends StatefulWidget {
+  const AuditorDashboard({super.key});
+
+  @override
+  State<AuditorDashboard> createState() => _AuditorDashboardState();
+}
+
+class _AuditorDashboardState extends State<AuditorDashboard> {
+  late Future<List<Map<String, dynamic>>> _allClaimsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshClaims();
+  }
+
+  void _refreshClaims() {
+    setState(() {
+      _allClaimsFuture = Supabase.instance.client
+          .from('claims')
+          .select()
+          .order('created_at', ascending: false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Compliance Audit Desk"),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _refreshClaims),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+            },
+          )
         ],
       ),
-      floatingActionButton: _currentIndex == 0 ? FloatingActionButton.extended(
-        onPressed: _showAddExpenseForm, label: const Text("New Expense"), icon: const Icon(Icons.add)
-      ) : null,
+      body: Row(
+        children: [
+          Container(
+            width: 250,
+            color: Colors.white,
+            child: ListView(
+              children: const [
+                ListTile(leading: Icon(Icons.warning, color: Colors.orange), title: Text("Action Required")),
+                ListTile(leading: Icon(Icons.check_circle, color: Colors.green), title: Text("Auto-Approved")),
+                ListTile(leading: Icon(Icons.analytics), title: Text("Spend Analytics")),
+              ],
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _allClaimsFuture,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                
+                List<Map<String, dynamic>> sorted = List.from(snapshot.data!);
+                sorted.sort((a, b) {
+                  int p(s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
+                  return p(a['status']).compareTo(p(b['status']));
+                });
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: sorted.length,
+                  itemBuilder: (context, index) {
+                    final claim = sorted[index];
+                    final status = claim['status'] ?? 'pending';
+                    Color sColor = status == 'approved' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
+
+                    return Card(
+                      child: ListTile(
+                        leading: Icon(Icons.receipt_long, color: sColor),
+                        title: Text("${claim['merchant_name']} - ${claim['currency']} ${claim['amount']}"),
+                        subtitle: Text("Status: ${status.toUpperCase()}"),
+                        trailing: ElevatedButton(
+                          onPressed: () => Navigator.push(
+                            context, 
+                            MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))
+                          ).then((_) => _refreshClaims()),
+                          child: const Text("Review Evidence"),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+// --- 4. SIDE-BY-SIDE AUDIT DETAIL VIEW ---
+class AuditDetailView extends StatelessWidget {
+  final Map<String, dynamic> claim;
+  
+  const AuditDetailView({super.key, required this.claim});
+
+  Future<void> _updateStatus(BuildContext context, String newStatus) async {
+    await Supabase.instance.client
+        .from('claims')
+        .update({'status': newStatus})
+        .eq('id', claim['id']);
+    if (context.mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Audit Evidence Detail")),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth > 800) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 1, child: _buildReceiptViewer()),
+                const VerticalDivider(width: 1),
+                Expanded(flex: 1, child: _buildExtractedDataAndPolicy(context)),
+              ],
+            );
+          } else {
+            return SingleChildScrollView(
+              child: Column(
+                children: [
+                  SizedBox(height: 400, child: _buildReceiptViewer()),
+                  _buildExtractedDataAndPolicy(context),
+                ],
+              ),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildReceiptViewer() {
+    return Container(
+      color: Colors.black87,
+      child: Center(
+        child: claim['image_url'] != null
+            ? InteractiveViewer(
+                panEnabled: true,
+                minScale: 0.5,
+                maxScale: 4,
+                child: Image.network(claim['image_url'], fit: BoxFit.contain),
+              )
+            : const Icon(Icons.receipt_long, size: 100, color: Colors.white24),
+      ),
+    );
+  }
+
+  Widget _buildExtractedDataAndPolicy(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Extracted Data", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          _infoRow("Merchant", claim['merchant_name']),
+          _infoRow("Amount", "${claim['currency']} ${claim['amount']}"),
+          _infoRow("Justification", claim['justification'] ?? 'N/A'),
+          
+          const Divider(height: 40),
+          
+          const Text("AI Policy Context & Verification", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.shade200)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("STATUS: ${claim['status'].toString().toUpperCase()}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(claim['audit_reason'] ?? "Awaiting AI Analysis of Article IV...", style: const TextStyle(fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 40),
+          
+          const Text("Auditor Actions", style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const TextField(
+            decoration: InputDecoration(
+              hintText: "Add custom note to employee...",
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 2,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)),
+                onPressed: () => _updateStatus(context, 'approved'), 
+                child: const Text("Approve Exception")
+              )),
+              const SizedBox(width: 16),
+              Expanded(child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)),
+                onPressed: () => _updateStatus(context, 'rejected'), 
+                child: const Text("Reject Claim")
+              )),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 100, child: Text(label, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))),
+          Expanded(child: Text(value)),
+        ],
+      ),
     );
   }
 }
