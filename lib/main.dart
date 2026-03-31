@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:expense_auditor/policy_data.dart';
+import 'package:fl_chart/fl_chart.dart'; // REQUIRED FOR ANALYTICS
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -166,7 +167,6 @@ class EmployeeDashboard extends StatefulWidget {
 }
 
 class _EmployeeDashboardState extends State<EmployeeDashboard> {
-  // NEW: Stream builder variable and WebSockets listener
   late final SupabaseStreamBuilder _claimsStream;
   RealtimeChannel? _notificationChannel;
   bool _isUploading = false;
@@ -177,14 +177,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     super.initState();
     final userId = Supabase.instance.client.auth.currentUser!.id;
 
-    // 1. LIVE DATA STREAM: Automatically updates the list
     _claimsStream = Supabase.instance.client
         .from('claims')
         .stream(primaryKey: ['id'])
         .eq('employee_id', userId)
         .order('created_at', ascending: false);
 
-    // 2. REALTIME NOTIFICATION LISTENER: Listens for Admin Updates
     _notificationChannel = Supabase.instance.client
         .channel('public:claims')
         .onPostgresChanges(
@@ -195,7 +193,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             final newRecord = payload.newRecord;
             final oldRecord = payload.oldRecord;
 
-            // Trigger notification ONLY if it's this user's claim AND the status changed
             if (newRecord['employee_id'] == userId && newRecord['status'] != oldRecord['status']) {
               final status = newRecord['status'].toString().toUpperCase();
               final merchant = newRecord['merchant_name'];
@@ -226,7 +223,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
   @override
   void dispose() {
-    // Clean up the WebSocket listener when leaving the screen
     if (_notificationChannel != null) {
       Supabase.instance.client.removeChannel(_notificationChannel!);
     }
@@ -249,7 +245,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
-  Future<void> _submitClaim(String merchant, double amount, String location, String justification) async {
+  Future<void> _submitClaim(String merchant, double amount, String date, String location, String justification) async {
     setState(() => _isUploading = true);
     try {
       final imageUrl = await _uploadToSupabase();
@@ -258,28 +254,34 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       final apiKey = dotenv.env['GROQ_API_KEY'];
       if (apiKey == null || apiKey.isEmpty) throw Exception('API Key missing in .env file');
 
+      // THE ULTIMATE SCRATCHPAD PROMPT
       final prompt = '''
-      You are an emotionless, strict Corporate Finance Auditor for Aetheris. You do not make exceptions. You enforce mathematical limits ruthlessly.
+      You are a highly skeptical, Zero-Trust Corporate Finance Investigator for Aetheris. Employees frequently lie, submit fake details, or upload blank/black images to steal money. 
       
       COMPANY POLICY:
       ${AetherisPolicy.fullText}
       
-      CLAIM DETAILS:
+      CLAIM DETAILS (SUBMITTED BY SUSPECT EMPLOYEE):
       Merchant: $merchant
       Amount: $amount USD
+      Claimed Date: $date
       Location: $location
-      Justification: $justification
       
-      EVALUATION RULES:
-      1. Determine the exact maximum numerical limit for the specified Location based on the policy.
-      2. Compare the Claim Amount ($amount) to that limit.
-      3. If the Claim Amount is strictly greater than the limit, the claim is a violation. Justifications do not override limits.
+      CRITICAL DIRECTIVE: DO NOT TRUST THE TEXT DETAILS ABOVE. YOU MUST VERIFY EVERYTHING USING ONLY YOUR EYES ON THE UPLOADED IMAGE. 
       
-      Respond ONLY with a valid JSON object. You MUST output the "reason" BEFORE the "status" to show your math:
+      You MUST output a valid JSON object with EXACTLY these keys in this EXACT order:
       {
-        "reason": "Explicitly state the policy limit for the location and mathematically compare it to the claim amount.",
+        "visual_check": "Describe the pixels of the image. Can you clearly read a merchant name and a price? If the image is solid black, blank, or a random photo, you MUST write exactly 'NO_RECEIPT_FOUND'.",
+        "date_check": "Extract the date from the image. If visual_check is 'NO_RECEIPT_FOUND', write 'FAIL'.",
+        "math_check": "Is $amount strictly greater than the policy limit for $location? Write 'YES' or 'NO'.",
+        "policy_snippet": "Extract the verbatim sentence from the policy justifying the decision. Output 'N/A' if the image is blank.",
+        "reason": "Write a 1-sentence summary of why this passed or failed.",
         "status": "approved, flagged, or rejected"
       }
+      
+      ABSOLUTE OVERRIDES:
+      - If visual_check contains 'NO_RECEIPT_FOUND', the status MUST be "rejected". Do not trust the employee's input.
+      - If math_check is 'YES', the status MUST be "rejected".
       ''';
 
       String base64Image = "";
@@ -327,16 +329,19 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       
       final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
       final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
+      final snippet = aiResult['policy_snippet'] ?? 'N/A';
 
       await Supabase.instance.client.from('claims').insert({
         'employee_id': userId,
         'merchant_name': merchant,
         'amount': amount,
+        'expense_date': date, 
         'location': location,
         'justification': justification,
         'currency': 'USD',
         'status': status,
         'audit_reason': reason,
+        'policy_snippet': snippet, 
         'image_url': imageUrl,
       });
       
@@ -357,7 +362,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   void _showAddExpenseForm() {
     final merchantController = TextEditingController();
     final amountController = TextEditingController();
-    final locationController = TextEditingController();
+    final dateController = TextEditingController(); 
+    final locationController = TextEditingController(); 
     final justificationController = TextEditingController();
     
     showModalBottomSheet(
@@ -372,7 +378,24 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               const Text('Submit New Expense', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
               TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
-              TextField(controller: locationController, decoration: const InputDecoration(labelText: 'City / Location (e.g., London, Kochi)')),
+              TextField(
+                controller: dateController, 
+                readOnly: true,
+                decoration: const InputDecoration(labelText: 'Date of Expense (YYYY-MM-DD)', suffixIcon: Icon(Icons.calendar_today)),
+                onTap: () async {
+                  DateTime? pickedDate = await showDatePicker(
+                    context: context,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2101)
+                  );
+                  if(pickedDate != null){
+                    String formattedDate = "${pickedDate.year}-${pickedDate.month.toString().padLeft(2, '0')}-${pickedDate.day.toString().padLeft(2, '0')}";
+                    setModalState(() { dateController.text = formattedDate; });
+                  }
+                },
+              ),
+              TextField(controller: locationController, decoration: const InputDecoration(labelText: 'City / Location (e.g., London, Kochi)')), 
               TextField(controller: justificationController, decoration: const InputDecoration(labelText: 'Justification')),
               const SizedBox(height: 15),
               OutlinedButton.icon(
@@ -384,7 +407,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               ElevatedButton(
                 onPressed: _isUploading ? null : () {
                   final amt = double.tryParse(amountController.text) ?? 0.0;
-                  _submitClaim(merchantController.text, amt, locationController.text, justificationController.text);
+                  _submitClaim(merchantController.text, amt, dateController.text, locationController.text, justificationController.text);
                 },
                 child: _isUploading ? const CircularProgressIndicator() : const Text("Submit to AI Auditor"),
               ),
@@ -411,12 +434,35 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           )
         ],
       ),
-      // NEW: StreamBuilder for real-time list updates
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _claimsStream,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No expenses submitted yet."));
+          // CONNECTION ERROR HANDLING
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.wifi_off, size: 48, color: Colors.grey),
+                    const SizedBox(height: 16),
+                    const Text("Live connection lost. Reconnecting...", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Text(snapshot.error.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return const Center(child: Text("No expenses submitted yet."));
+          }
           
           final claims = snapshot.data!;
           return ListView.builder(
@@ -473,21 +519,16 @@ class AuditorDashboard extends StatefulWidget {
 }
 
 class _AuditorDashboardState extends State<AuditorDashboard> {
-  late Future<List<Map<String, dynamic>>> _allClaimsFuture;
+  late final SupabaseStreamBuilder _allClaimsStream;
+  int _selectedIndex = 0; // 0: Queue, 1: Analytics
 
   @override
   void initState() {
     super.initState();
-    _refreshClaims();
-  }
-
-  void _refreshClaims() {
-    setState(() {
-      _allClaimsFuture = Supabase.instance.client
-          .from('claims')
-          .select()
-          .order('created_at', ascending: false);
-    });
+    _allClaimsStream = Supabase.instance.client
+        .from('claims')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false);
   }
 
   @override
@@ -496,7 +537,6 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
       appBar: AppBar(
         title: const Text("Compliance Audit Desk"),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _refreshClaims),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -508,56 +548,148 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
       ),
       body: Row(
         children: [
+          // LEFT MENU
           Container(
             width: 250,
             color: Colors.white,
             child: ListView(
-              children: const [
-                ListTile(leading: Icon(Icons.warning, color: Colors.orange), title: Text("Action Required")),
-                ListTile(leading: Icon(Icons.check_circle, color: Colors.green), title: Text("Auto-Approved")),
-                ListTile(leading: Icon(Icons.analytics), title: Text("Spend Analytics")),
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.list_alt, color: Colors.blue), 
+                  title: const Text("Audit Queue"),
+                  selected: _selectedIndex == 0,
+                  selectedTileColor: Colors.blue.shade50,
+                  onTap: () => setState(() => _selectedIndex = 0),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.analytics, color: Colors.purple), 
+                  title: const Text("Spend Analytics"),
+                  selected: _selectedIndex == 1,
+                  selectedTileColor: Colors.purple.shade50,
+                  onTap: () => setState(() => _selectedIndex = 1),
+                ),
               ],
             ),
           ),
           const VerticalDivider(width: 1),
+          // RIGHT CONTENT AREA
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _allClaimsFuture,
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: _allClaimsStream,
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 
-                List<Map<String, dynamic>> sorted = List.from(snapshot.data!);
-                sorted.sort((a, b) {
-                  int p(s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
-                  return p(a['status']).compareTo(p(b['status']));
-                });
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: sorted.length,
-                  itemBuilder: (context, index) {
-                    final claim = sorted[index];
-                    final status = claim['status'] ?? 'pending';
-                    Color sColor = status == 'approved' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
-
-                    return Card(
-                      child: ListTile(
-                        leading: Icon(Icons.receipt_long, color: sColor),
-                        title: Text("${claim['merchant_name']} - ${claim['currency']} ${claim['amount']}"),
-                        subtitle: Text("Status: ${status.toUpperCase()}"),
-                        trailing: ElevatedButton(
-                          onPressed: () => Navigator.push(
-                            context, 
-                            MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))
-                          ).then((_) => _refreshClaims()),
-                          child: const Text("Review Evidence"),
-                        ),
-                      ),
-                    );
-                  },
-                );
+                final claims = snapshot.data!;
+                
+                if (_selectedIndex == 0) {
+                  return _buildAuditQueue(claims);
+                } else {
+                  return _buildAnalyticsDashboard(claims);
+                }
               },
             ),
+          )
+        ],
+      ),
+    );
+  }
+
+  // VIEW 1: THE STANDARD AUDIT QUEUE
+  Widget _buildAuditQueue(List<Map<String, dynamic>> claims) {
+    List<Map<String, dynamic>> sorted = List.from(claims);
+    sorted.sort((a, b) {
+      int p(s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
+      return p(a['status']).compareTo(p(b['status']));
+    });
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: sorted.length,
+      itemBuilder: (context, index) {
+        final claim = sorted[index];
+        final status = claim['status'] ?? 'pending';
+        Color sColor = status == 'approved' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
+
+        return Card(
+          child: ListTile(
+            leading: Icon(Icons.receipt_long, color: sColor),
+            title: Text("${claim['merchant_name']} - ${claim['currency']} ${claim['amount']}"),
+            subtitle: Text("Status: ${status.toUpperCase()} | Date: ${claim['expense_date'] ?? 'N/A'}"),
+            trailing: ElevatedButton(
+              onPressed: () => Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))
+              ),
+              child: const Text("Review Evidence"),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // VIEW 2: THE NEW ANALYTICS DASHBOARD
+  Widget _buildAnalyticsDashboard(List<Map<String, dynamic>> claims) {
+    int approved = 0;
+    int flagged = 0;
+    int rejected = 0;
+    double totalApprovedSpend = 0;
+
+    for (var claim in claims) {
+      final status = claim['status'];
+      final amount = (claim['amount'] as num).toDouble();
+      if (status == 'approved') {
+        approved++;
+        totalApprovedSpend += amount;
+      } else if (status == 'flagged') flagged++;
+      else if (status == 'rejected') rejected++;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(32.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Financial Health Overview", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 32),
+          Row(
+            children: [
+              // BIG NUMBER CARD
+              Expanded(
+                child: Card(
+                  color: const Color(0xFF0A2342),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Total Approved Spend", style: TextStyle(color: Colors.grey, fontSize: 16)),
+                        const SizedBox(height: 8),
+                        Text("\$${totalApprovedSpend.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 32),
+              // PIE CHART
+              Expanded(
+                child: SizedBox(
+                  height: 250,
+                  child: claims.isEmpty ? const Center(child: Text("No data yet")) : PieChart(
+                    PieChartData(
+                      sectionsSpace: 2,
+                      centerSpaceRadius: 60,
+                      sections: [
+                        PieChartSectionData(color: Colors.green, value: approved.toDouble(), title: 'Approved\n($approved)', radius: 60, titleStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        PieChartSectionData(color: Colors.orange, value: flagged.toDouble(), title: 'Flagged\n($flagged)', radius: 60, titleStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        PieChartSectionData(color: Colors.red, value: rejected.toDouble(), title: 'Rejected\n($rejected)', radius: 60, titleStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            ],
           )
         ],
       ),
@@ -635,6 +767,7 @@ class AuditDetailView extends StatelessWidget {
           const SizedBox(height: 12),
           _infoRow("Merchant", claim['merchant_name']),
           _infoRow("Amount", "${claim['currency']} ${claim['amount']}"),
+          _infoRow("Date Claimed", claim['expense_date'] ?? 'Not Specified'), 
           _infoRow("Location", claim['location'] ?? 'Not Specified'),
           _infoRow("Justification", claim['justification'] ?? 'N/A'),
           
@@ -650,7 +783,19 @@ class AuditDetailView extends StatelessWidget {
               children: [
                 Text("STATUS: ${claim['status'].toString().toUpperCase()}", style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                Text(claim['audit_reason'] ?? "Awaiting AI Analysis of Article IV...", style: const TextStyle(fontStyle: FontStyle.italic)),
+                Text(claim['audit_reason'] ?? "Awaiting AI Analysis...", style: const TextStyle(fontStyle: FontStyle.italic)),
+                
+                const SizedBox(height: 16),
+                const Text("VERBATIM POLICY SNIPPET:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blueGrey)),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.white, border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)),
+                  child: Text(
+                    '"${claim['policy_snippet'] ?? 'N/A'}"', 
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: Colors.black87)
+                  ),
+                ),
               ],
             ),
           ),
