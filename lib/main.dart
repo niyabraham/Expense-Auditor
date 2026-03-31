@@ -166,25 +166,71 @@ class EmployeeDashboard extends StatefulWidget {
 }
 
 class _EmployeeDashboardState extends State<EmployeeDashboard> {
-  late Future<List<Map<String, dynamic>>> _myClaimsFuture;
+  // NEW: Stream builder variable and WebSockets listener
+  late final SupabaseStreamBuilder _claimsStream;
+  RealtimeChannel? _notificationChannel;
   bool _isUploading = false;
   PlatformFile? _pickedFile;
 
   @override
   void initState() {
     super.initState();
-    _refreshClaims();
+    final userId = Supabase.instance.client.auth.currentUser!.id;
+
+    // 1. LIVE DATA STREAM: Automatically updates the list
+    _claimsStream = Supabase.instance.client
+        .from('claims')
+        .stream(primaryKey: ['id'])
+        .eq('employee_id', userId)
+        .order('created_at', ascending: false);
+
+    // 2. REALTIME NOTIFICATION LISTENER: Listens for Admin Updates
+    _notificationChannel = Supabase.instance.client
+        .channel('public:claims')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'claims',
+          callback: (payload) {
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            // Trigger notification ONLY if it's this user's claim AND the status changed
+            if (newRecord['employee_id'] == userId && newRecord['status'] != oldRecord['status']) {
+              final status = newRecord['status'].toString().toUpperCase();
+              final merchant = newRecord['merchant_name'];
+              final color = status == 'APPROVED' ? Colors.green : Colors.red;
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        Icon(status == 'APPROVED' ? Icons.check_circle : Icons.cancel, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text("UPDATE: Your $merchant claim was $status!", style: const TextStyle(fontWeight: FontWeight.bold))),
+                      ],
+                    ),
+                    backgroundColor: color,
+                    behavior: SnackBarBehavior.floating,
+                    margin: const EdgeInsets.only(top: 20, left: 20, right: 20),
+                    duration: const Duration(seconds: 6),
+                  ),
+                );
+              }
+            }
+          },
+        )
+        .subscribe();
   }
 
-  void _refreshClaims() {
-    final userId = Supabase.instance.client.auth.currentUser!.id;
-    setState(() {
-      _myClaimsFuture = Supabase.instance.client
-          .from('claims')
-          .select()
-          .eq('employee_id', userId)
-          .order('created_at', ascending: false);
-    });
+  @override
+  void dispose() {
+    // Clean up the WebSocket listener when leaving the screen
+    if (_notificationChannel != null) {
+      Supabase.instance.client.removeChannel(_notificationChannel!);
+    }
+    super.dispose();
   }
 
   Future<void> _pickReceipt() async {
@@ -203,15 +249,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
-  // --- LOCATION-AWARE HTTP AI CALL ---
   Future<void> _submitClaim(String merchant, double amount, String location, String justification) async {
     setState(() => _isUploading = true);
     try {
-      // 1. Upload to Supabase
       final imageUrl = await _uploadToSupabase();
       final userId = Supabase.instance.client.auth.currentUser!.id;
       
-      // 2. Fetch API Key
       final apiKey = dotenv.env['GROQ_API_KEY'];
       if (apiKey == null || apiKey.isEmpty) throw Exception('API Key missing in .env file');
 
@@ -239,13 +282,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       }
       ''';
 
-      // 3. Encode Image to Base64
       String base64Image = "";
       if (_pickedFile != null && _pickedFile!.bytes != null) {
         base64Image = base64Encode(_pickedFile!.bytes!);
       }
 
-      // 4. Send HTTP REST Request to Groq 
       final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
       
       final aiResponse = await http.post(
@@ -280,7 +321,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         throw Exception("API Error ${aiResponse.statusCode}: ${aiResponse.body}");
       }
 
-      // 5. Parse the JSON Response
       final responseData = jsonDecode(aiResponse.body);
       final responseText = responseData['choices'][0]['message']['content'];
       final aiResult = jsonDecode(responseText);
@@ -288,7 +328,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
       final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
 
-      // 6. Save to Database with Location
       await Supabase.instance.client.from('claims').insert({
         'employee_id': userId,
         'merchant_name': merchant,
@@ -301,7 +340,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         'image_url': imageUrl,
       });
       
-      _refreshClaims();
       setState(() { _pickedFile = null; _isUploading = false; });
       if (mounted) Navigator.pop(context);
       
@@ -319,7 +357,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   void _showAddExpenseForm() {
     final merchantController = TextEditingController();
     final amountController = TextEditingController();
-    final locationController = TextEditingController(); // NEW Location Controller
+    final locationController = TextEditingController();
     final justificationController = TextEditingController();
     
     showModalBottomSheet(
@@ -334,7 +372,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               const Text('Submit New Expense', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
               TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
-              TextField(controller: locationController, decoration: const InputDecoration(labelText: 'City / Location (e.g., London, Kochi)')), // NEW Location Field
+              TextField(controller: locationController, decoration: const InputDecoration(labelText: 'City / Location (e.g., London, Kochi)')),
               TextField(controller: justificationController, decoration: const InputDecoration(labelText: 'Justification')),
               const SizedBox(height: 15),
               OutlinedButton.icon(
@@ -362,7 +400,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("My Expenses"),
+        title: const Text("My Expenses (Live)"),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -373,8 +411,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           )
         ],
       ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _myClaimsFuture,
+      // NEW: StreamBuilder for real-time list updates
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _claimsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
           if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No expenses submitted yet."));
@@ -596,7 +635,7 @@ class AuditDetailView extends StatelessWidget {
           const SizedBox(height: 12),
           _infoRow("Merchant", claim['merchant_name']),
           _infoRow("Amount", "${claim['currency']} ${claim['amount']}"),
-          _infoRow("Location", claim['location'] ?? 'Not Specified'), // NEW Location Row
+          _infoRow("Location", claim['location'] ?? 'Not Specified'),
           _infoRow("Justification", claim['justification'] ?? 'N/A'),
           
           const Divider(height: 40),
