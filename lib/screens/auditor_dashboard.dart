@@ -26,8 +26,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     _allClaimsStream = Supabase.instance.client
         .from('claims')
         .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false)
-        .limit(200);
+        .order('created_at', ascending: false);
   }
 
   void _handleLogout() async {

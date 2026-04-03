@@ -29,8 +29,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         .from('claims')
         .stream(primaryKey: ['id'])
         .eq('employee_id', userId)
-        .order('created_at', ascending: false)
-        .limit(50);
+        .order('created_at', ascending: false);
 
     _notificationChannel = Supabase.instance.client
         .channel('public:claims')
