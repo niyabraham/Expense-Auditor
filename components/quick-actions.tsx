@@ -18,26 +18,26 @@ interface QuickAction {
 
 const actions: QuickAction[] = [
   {
-    label: "New Expense",
-    description: "Submit a new expense report",
+    label: "Scan Receipt",
+    description: "Submit new expense with AI verification",
     icon: Plus,
     color: "bg-primary text-primary-foreground",
   },
   {
-    label: "Upload Receipts",
+    label: "Upload Evidence",
     description: "Bulk upload receipt images",
     icon: Upload,
     color: "bg-chart-2 text-foreground",
   },
   {
-    label: "Generate Report",
-    description: "Create audit-ready reports",
+    label: "Analytics",
+    description: "View spend analysis & charts",
     icon: FileBarChart,
     color: "bg-chart-3 text-foreground",
   },
   {
-    label: "Request Approval",
-    description: "Submit expenses for review",
+    label: "Policy Manual",
+    description: "View compliance guidelines",
     icon: Send,
     color: "bg-chart-5 text-foreground",
   },

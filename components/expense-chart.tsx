@@ -12,18 +12,11 @@ import {
 import { ChevronRight } from "lucide-react";
 
 const data = [
-  { name: "Jan", expenses: 32000, budget: 45000 },
-  { name: "Feb", expenses: 28000, budget: 45000 },
-  { name: "Mar", expenses: 41000, budget: 45000 },
-  { name: "Apr", expenses: 38000, budget: 45000 },
-  { name: "May", expenses: 35000, budget: 45000 },
-  { name: "Jun", expenses: 42000, budget: 45000 },
-  { name: "Jul", expenses: 39000, budget: 45000 },
-  { name: "Aug", expenses: 44000, budget: 45000 },
-  { name: "Sep", expenses: 37000, budget: 45000 },
-  { name: "Oct", expenses: 43000, budget: 45000 },
-  { name: "Nov", expenses: 46000, budget: 45000 },
-  { name: "Dec", expenses: 41000, budget: 45000 },
+  { name: "Week 1", approved: 12500, flagged: 2800 },
+  { name: "Week 2", approved: 18200, flagged: 3400 },
+  { name: "Week 3", approved: 15600, flagged: 1900 },
+  { name: "Week 4", approved: 21400, flagged: 2100 },
+  { name: "Week 5", approved: 16550, flagged: 1850 },
 ];
 
 function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; dataKey: string }[]; label?: string }) {
@@ -37,12 +30,12 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
               className="mr-2 inline-block h-2 w-2 rounded-full"
               style={{
                 backgroundColor:
-                  entry.dataKey === "expenses"
-                    ? "hsl(262, 83%, 58%)"
-                    : "hsl(173, 80%, 40%)",
+                  entry.dataKey === "approved"
+                    ? "hsl(142, 71%, 45%)"
+                    : "hsl(38, 92%, 50%)",
               }}
             />
-            {entry.dataKey === "expenses" ? "Expenses" : "Budget"}: $
+            {entry.dataKey === "approved" ? "Approved" : "Flagged"}: $
             {entry.value.toLocaleString()}
           </p>
         ))}
@@ -57,17 +50,17 @@ export function ExpenseChart() {
     <div className="rounded-xl border border-border bg-card p-5">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold">Expense Overview</h3>
-          <p className="text-sm text-muted-foreground">Monthly expense tracking vs budget</p>
+          <h3 className="text-lg font-semibold">Financial Health Overview</h3>
+          <p className="text-sm text-muted-foreground">Approved spend vs flagged claims</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-            <span className="text-xs text-muted-foreground">Expenses</span>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "hsl(142, 71%, 45%)" }} />
+            <span className="text-xs text-muted-foreground">Approved</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-chart-2" />
-            <span className="text-xs text-muted-foreground">Budget</span>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "hsl(38, 92%, 50%)" }} />
+            <span className="text-xs text-muted-foreground">Flagged</span>
           </div>
           <button className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
             View Details
@@ -79,13 +72,13 @@ export function ExpenseChart() {
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
             <defs>
-              <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="hsl(262, 83%, 58%)" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="hsl(262, 83%, 58%)" stopOpacity={0} />
+              <linearGradient id="approvedGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="hsl(142, 71%, 45%)" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="hsl(142, 71%, 45%)" stopOpacity={0} />
               </linearGradient>
-              <linearGradient id="budgetGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="hsl(173, 80%, 40%)" stopOpacity={0.2} />
-                <stop offset="100%" stopColor="hsl(173, 80%, 40%)" stopOpacity={0} />
+              <linearGradient id="flaggedGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="hsl(38, 92%, 50%)" stopOpacity={0.2} />
+                <stop offset="100%" stopColor="hsl(38, 92%, 50%)" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 18%)" vertical={false} />
@@ -105,17 +98,17 @@ export function ExpenseChart() {
             <Tooltip content={<CustomTooltip />} />
             <Area
               type="monotone"
-              dataKey="budget"
-              stroke="hsl(173, 80%, 40%)"
+              dataKey="flagged"
+              stroke="hsl(38, 92%, 50%)"
               strokeWidth={2}
-              fill="url(#budgetGradient)"
+              fill="url(#flaggedGradient)"
             />
             <Area
               type="monotone"
-              dataKey="expenses"
-              stroke="hsl(262, 83%, 58%)"
+              dataKey="approved"
+              stroke="hsl(142, 71%, 45%)"
               strokeWidth={2}
-              fill="url(#expenseGradient)"
+              fill="url(#approvedGradient)"
             />
           </AreaChart>
         </ResponsiveContainer>

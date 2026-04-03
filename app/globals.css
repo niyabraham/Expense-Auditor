@@ -3,34 +3,34 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 7%;
-  --foreground: 0 0% 98%;
-  --card: 0 0% 10%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 10%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 262 83% 58%;
+  --background: 215 60% 6%;
+  --foreground: 210 40% 98%;
+  --card: 215 50% 9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 215 50% 9%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 215 85% 47%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 0 0% 15%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 15%;
-  --muted-foreground: 0 0% 64%;
-  --accent: 262 83% 58%;
+  --secondary: 215 40% 14%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 215 40% 14%;
+  --muted-foreground: 215 20% 60%;
+  --accent: 215 85% 47%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 84% 60%;
+  --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --success: 142 76% 36%;
+  --success: 142 71% 45%;
   --success-foreground: 0 0% 100%;
   --warning: 38 92% 50%;
   --warning-foreground: 0 0% 0%;
-  --border: 0 0% 18%;
-  --input: 0 0% 18%;
-  --ring: 262 83% 58%;
+  --border: 215 40% 16%;
+  --input: 215 40% 16%;
+  --ring: 215 85% 47%;
   --radius: 0.625rem;
-  --chart-1: 262 83% 58%;
-  --chart-2: 173 80% 40%;
+  --chart-1: 215 85% 47%;
+  --chart-2: 142 71% 45%;
   --chart-3: 38 92% 50%;
-  --chart-4: 0 84% 60%;
+  --chart-4: 0 72% 51%;
   --chart-5: 199 89% 48%;
 }
 

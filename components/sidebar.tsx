@@ -26,21 +26,21 @@ interface NavItem {
 }
 
 const mainNavItems: NavItem[] = [
-  { label: "Overview", icon: LayoutDashboard, href: "#", active: true },
-  { label: "Expenses", icon: Receipt, href: "#", badge: "24" },
-  { label: "Audit Log", icon: FileSearch, href: "#" },
+  { label: "Dashboard", icon: LayoutDashboard, href: "#", active: true },
+  { label: "Audit Queue", icon: FileSearch, href: "#", badge: "12" },
+  { label: "My Expenses", icon: Receipt, href: "#" },
   { label: "Analytics", icon: PieChart, href: "#" },
 ];
 
 const complianceItems: NavItem[] = [
-  { label: "Flagged Items", icon: AlertTriangle, href: "#", badge: "3" },
-  { label: "Reports", icon: FileText, href: "#" },
-  { label: "Policies", icon: FileText, href: "#" },
+  { label: "Flagged Claims", icon: AlertTriangle, href: "#", badge: "3" },
+  { label: "Rejected", icon: FileText, href: "#", badge: "5" },
+  { label: "Policy Manual", icon: FileText, href: "#" },
 ];
 
 const settingsItems: NavItem[] = [
-  { label: "Team", icon: Users, href: "#" },
-  { label: "Payments", icon: CreditCard, href: "#" },
+  { label: "Team Members", icon: Users, href: "#" },
+  { label: "Integrations", icon: CreditCard, href: "#" },
   { label: "Settings", icon: Settings, href: "#" },
 ];
 
@@ -105,7 +105,10 @@ export function Sidebar() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <Building2 className="h-5 w-5 text-primary-foreground" />
             </div>
-            <span className="text-lg font-semibold">ExpenseAudit</span>
+            <div className="flex flex-col">
+              <span className="text-base font-semibold leading-tight">Aetheris</span>
+              <span className="text-xs text-muted-foreground leading-tight">Expense Auditor</span>
+            </div>
           </div>
         )}
         {collapsed && (

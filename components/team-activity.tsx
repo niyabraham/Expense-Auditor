@@ -17,37 +17,37 @@ interface Activity {
 const activities: Activity[] = [
   {
     id: "1",
-    user: { name: "Sarah Chen", initials: "SC" },
+    user: { name: "AI Engine", initials: "AI" },
     action: "approved",
-    target: "EXP-004 Office Furniture",
+    target: "CLM-001 Uber $45 - Tier-1 compliant",
     time: "2 min ago",
   },
   {
     id: "2",
-    user: { name: "John Doe", initials: "JD" },
+    user: { name: "Sarah Chen", initials: "SC" },
     action: "submitted",
-    target: "EXP-006 Software License",
+    target: "CLM-007 Delta Airlines $1,850",
     time: "15 min ago",
   },
   {
     id: "3",
-    user: { name: "Mike Wilson", initials: "MW" },
+    user: { name: "AI Engine", initials: "AI" },
     action: "flagged",
-    target: "EXP-003 for review",
+    target: "CLM-002 - exceeds Tier-1 limit",
     time: "1 hour ago",
   },
   {
     id: "4",
     user: { name: "Lisa Park", initials: "LP" },
     action: "uploaded",
-    target: "3 receipts to pending expenses",
+    target: "receipt for CLM-004",
     time: "2 hours ago",
   },
   {
     id: "5",
-    user: { name: "Alex Kim", initials: "AK" },
-    action: "commented",
-    target: "on EXP-002",
+    user: { name: "Admin", initials: "AD" },
+    action: "rejected",
+    target: "CLM-003 - NO_RECEIPT_FOUND",
     time: "3 hours ago",
   },
 ];
@@ -57,15 +57,15 @@ const actionColors: Record<string, string> = {
   submitted: "text-primary",
   flagged: "text-warning",
   uploaded: "text-chart-5",
-  commented: "text-muted-foreground",
+  rejected: "text-destructive",
 };
 
 export function TeamActivity() {
   return (
     <div className="rounded-xl border border-border bg-card p-5">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold">Team Activity</h3>
-        <p className="text-sm text-muted-foreground">Recent actions by your team</p>
+        <h3 className="text-lg font-semibold">Live Activity</h3>
+        <p className="text-sm text-muted-foreground">Real-time AI and team actions</p>
       </div>
 
       <div className="space-y-4">

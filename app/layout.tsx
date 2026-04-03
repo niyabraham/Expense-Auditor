@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Expense Auditor | Modern Fintech Dashboard",
-  description: "Professional expense tracking, auditing, and analytics platform for businesses. Monitor spending, ensure compliance, and gain actionable insights.",
+  title: "Aetheris Expense Auditor | AI-Powered Corporate Compliance",
+  description: "AI-powered expense auditor for corporate compliance. Submit claims, verify receipts with AI vision, and ensure policy adherence.",
 };
 
 export const viewport: Viewport = {

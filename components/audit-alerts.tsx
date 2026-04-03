@@ -21,22 +21,22 @@ const alerts: Alert[] = [
   {
     id: "1",
     type: "critical",
-    title: "Missing Receipt",
-    description: "EXP-003 (Conference Sponsorship) requires receipt upload for compliance",
+    title: "NO_RECEIPT_FOUND",
+    description: "CLM-003: AI detected blank/corrupted image. Manual review required per Article IX.",
     time: "2 hours ago",
   },
   {
     id: "2",
     type: "warning",
-    title: "Budget Threshold",
-    description: "Marketing category at 92% of monthly budget allocation",
+    title: "Policy Violation",
+    description: "CLM-002: Amount $485 exceeds Tier-1 accommodation limit ($250/night) per Article VI.",
     time: "5 hours ago",
   },
   {
     id: "3",
     type: "info",
-    title: "Policy Update",
-    description: "New expense policy for Q2 takes effect April 1st",
+    title: "High-Risk Flag",
+    description: "CLM-005: Weekend expense flagged. Article VII requires keyword justification.",
     time: "1 day ago",
   },
 ];
@@ -64,8 +64,8 @@ export function AuditAlerts() {
     <div className="rounded-xl border border-border bg-card p-5">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold">Audit Alerts</h3>
-          <p className="text-sm text-muted-foreground">Action items requiring attention</p>
+          <h3 className="text-lg font-semibold">AI Policy Alerts</h3>
+          <p className="text-sm text-muted-foreground">Claims requiring auditor review</p>
         </div>
         <button className="flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           View All

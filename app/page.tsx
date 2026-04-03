@@ -24,33 +24,35 @@ export default function DashboardPage() {
           {/* Stats Grid */}
           <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatsCard
-              title="Total Expenses"
-              value={117000}
-              change={12.5}
+              title="Total Approved Spend"
+              value={84250}
+              change={8.2}
               trend="up"
               icon={<DollarSign className="h-5 w-5" />}
             />
             <StatsCard
-              title="Budget Remaining"
-              value={43000}
-              change={-8.2}
-              trend="down"
-              icon={<TrendingDown className="h-5 w-5" />}
-            />
-            <StatsCard
-              title="Pending Approval"
-              value="24"
-              change={3.1}
+              title="Claims Approved"
+              value="47"
+              change={12}
               trend="up"
+              changeLabel="this month"
               icon={<Receipt className="h-5 w-5" />}
             />
             <StatsCard
-              title="Flagged Items"
-              value="3"
+              title="Flagged by AI"
+              value="8"
+              change={-15}
+              trend="down"
+              changeLabel="vs last month"
+              icon={<AlertTriangle className="h-5 w-5" />}
+            />
+            <StatsCard
+              title="Rejected Claims"
+              value="5"
               change={-25}
               trend="down"
               changeLabel="from last week"
-              icon={<AlertTriangle className="h-5 w-5" />}
+              icon={<TrendingDown className="h-5 w-5" />}
             />
           </div>
 
