@@ -6,6 +6,7 @@ import '../components/sidebar.dart';
 import '../components/header.dart';
 import '../components/stats_card.dart';
 import '../policy_data.dart';
+import '../models/claim_status.dart';
 import 'login_page.dart';
 
 class AuditorDashboard extends StatefulWidget {
@@ -17,16 +18,48 @@ class AuditorDashboard extends StatefulWidget {
 
 class _AuditorDashboardState extends State<AuditorDashboard> {
   late final SupabaseStreamBuilder _allClaimsStream;
+  late final RealtimeChannel _notificationChannel;
+  Map<String, dynamic>? _dashboardStats;
   int _selectedIndex =
       0; // 0: Dashboard, 1: Alerts, 2: Expenses, 3: Analytics...
 
   @override
   void initState() {
     super.initState();
+    _refreshChartDataViaRPC();
+
     _allClaimsStream = Supabase.instance.client
         .from('claims')
         .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .limit(50); // Kept for the audit queue only
+
+    _notificationChannel = Supabase.instance.client
+        .channel('public:claims_auditor')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'claims',
+          callback: (payload) {
+             _refreshChartDataViaRPC();
+          },
+        )
+        .subscribe();
+  }
+
+  Future<void> _refreshChartDataViaRPC() async {
+    try {
+      final res = await Supabase.instance.client.rpc('get_dashboard_analytics');
+      if (mounted) setState(() => _dashboardStats = res as Map<String, dynamic>);
+    } catch(e) {
+      debugPrint("RPC Error: $e");
+    }
+  }
+
+  @override
+  void dispose() {
+    Supabase.instance.client.removeChannel(_notificationChannel);
+    super.dispose();
   }
 
   void _handleLogout() async {
@@ -122,13 +155,13 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
           ),
         );
       case 3:
-        int approvedCount = 0, flaggedCount = 0, rejectedCount = 0;
-        for (var claim in claims) {
-          final status = claim['status'];
-          if (status == 'approved') approvedCount++;
-          else if (status == 'flagged') flaggedCount++;
-          else if (status == 'rejected') rejectedCount++;
+        if (_dashboardStats == null) {
+          return const Center(child: CircularProgressIndicator());
         }
+        final approvedCount = _dashboardStats!['approved_count'] ?? 0;
+        final flaggedCount = _dashboardStats!['flagged_count'] ?? 0;
+        final rejectedCount = _dashboardStats!['rejected_count'] ?? 0;
+        
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: LayoutBuilder(
@@ -184,23 +217,15 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
   }
 
   Widget _buildDashboardContent(List<Map<String, dynamic>> claims) {
-    // Dynamic Stats Calculation
-    int approvedCount = 0;
-    int flaggedCount = 0;
-    int rejectedCount = 0;
-    double totalApprovedSpend = 0;
-
-    for (var claim in claims) {
-      final status = claim['status'];
-      final amount = (claim['amount'] as num).toDouble();
-      if (status == 'approved') {
-        approvedCount++;
-        totalApprovedSpend += amount;
-      } else if (status == 'flagged')
-        flaggedCount++;
-      else if (status == 'rejected')
-        rejectedCount++;
+    if (_dashboardStats == null) {
+      return const Center(child: CircularProgressIndicator());
     }
+
+    // Dynamic Stats Calculation from RPC
+    final approvedCount = _dashboardStats!['approved_count'] ?? 0;
+    final flaggedCount = _dashboardStats!['flagged_count'] ?? 0;
+    final rejectedCount = _dashboardStats!['rejected_count'] ?? 0;
+    final totalApprovedSpend = (_dashboardStats!['total_approved_spend'] as num?)?.toDouble() ?? 0.0;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -326,47 +351,44 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
 
   // --- UI HELPER: DYNAMIC BAR CHART ---
   Widget _buildDynamicExpenseChart(List<Map<String, dynamic>> claims) {
+    Map<String, dynamic> rawMonthly = _dashboardStats?['monthly_spend'] ?? {};
+    
+    // 1. Initialize an empty map for all 12 months
     Map<int, double> monthlySpend = {
-      1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0,
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 
       7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0
     };
 
-    for (var claim in claims) {
-      if (claim['status'] == 'approved' && claim['expense_date'] != null) {
-        try {
-          String dateStr = claim['expense_date'].toString();
-          int month = int.parse(dateStr.split('-')[1]);
-          double amount = (claim['amount'] as num).toDouble();
-          monthlySpend[month] = monthlySpend[month]! + amount;
-        } catch (e) {
-          debugPrint("Skipping invalid date format: ${claim['expense_date']}");
-        }
-      }
-    }
+    double maxVal = 0.0;
+    rawMonthly.forEach((k, v) {
+       int month = int.tryParse(k) ?? 1;
+       double val = (v as num).toDouble();
+       monthlySpend[month] = val;
+       if (val > maxVal) maxVal = val;
+    });
+
+    double maxY = maxVal > 0 ? (maxVal * 1.2) : 20000;
 
     List<BarChartGroupData> barGroups = [];
-    double maxBudget = 20000;
     for (int i = 1; i <= 12; i++) {
-      if (monthlySpend[i]! > 0 || i <= 7) {
-        barGroups.add(
-          BarChartGroupData(
-            x: i,
-            barRods: [
-              BarChartRodData(
-                toY: monthlySpend[i]!,
-                color: AppTheme.primary,
-                width: 22,
-                borderRadius: BorderRadius.circular(4),
-                backDrawRodData: BackgroundBarChartRodData(
-                  show: true,
-                  toY: maxBudget,
-                  color: AppTheme.border.withOpacity(0.5),
-                ),
+      barGroups.add(
+        BarChartGroupData(
+          x: i,
+          barRods: [
+            BarChartRodData(
+              toY: monthlySpend[i]!,
+              color: AppTheme.primary,
+              width: 22,
+              borderRadius: BorderRadius.circular(4),
+              backDrawRodData: BackgroundBarChartRodData(
+                show: true,
+                toY: maxY,
+                color: AppTheme.border.withOpacity(0.5),
               ),
-            ],
-          ),
-        );
-      }
+            ),
+          ],
+        ),
+      );
     }
 
     return Card(
@@ -389,7 +411,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
               child: BarChart(
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
-                  maxY: maxBudget,
+                  maxY: maxY, // Dynamic Maximum Bounds
                   barTouchData: BarTouchData(enabled: false),
                   borderData: FlBorderData(show: false),
                   gridData: FlGridData(

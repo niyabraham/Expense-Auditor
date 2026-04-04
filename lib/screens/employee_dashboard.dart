@@ -1,9 +1,9 @@
-import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:file_picker/file_picker.dart';
-import '../policy_data.dart';
+
 import '../theme/app_theme.dart';
 import 'login_page.dart';
 
@@ -117,42 +117,58 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
-  Future<void> _submitClaim(
-    String merchant,
-    double amount,
-    String date,
-    String location,
-    String justification,
-  ) async {
+  Future<void> _startAIAuditFlow() async {
+    await _pickReceipt();
+    if (_pickedFile == null) return;
+    
     setState(() => _isUploading = true);
+    String? imageUrl;
+    
     try {
-      final imageUrl = await _uploadToSupabase();
-      final userId = Supabase.instance.client.auth.currentUser!.id;
-
-      String base64Image = "";
-      if (_pickedFile != null && _pickedFile!.bytes != null) {
-        base64Image = base64Encode(_pickedFile!.bytes!);
-      }
-
+      imageUrl = await _uploadToSupabase();
+      if (imageUrl == null) throw Exception("Upload to Supabase Storage failed");
+      
       final response = await Supabase.instance.client.functions.invoke(
         'audit_receipt',
         body: {
-          'merchant': merchant,
-          'amount': amount,
-          'date': date,
-          'location': location,
-          'base64Image': base64Image,
-          'policyText': AetherisPolicy.fullText,
+          'imageUrl': imageUrl,
+          'location': 'Auto-detecting...'
         },
       );
-
-      final aiResult = jsonDecode(response.data['choices'][0]['message']['content']);
-
+      
+      final aiResult = response.data;
+      final merchant = aiResult['merchant'] ?? '';
+      final amount = double.tryParse(aiResult['amount']?.toString() ?? '0') ?? 0.0;
+      final date = aiResult['date'] ?? '';
       final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
-      final reason =
-          aiResult['reason'] ?? 'AI Analysis required manual review.';
+      final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
       final snippet = aiResult['policy_snippet'] ?? 'N/A';
 
+      setState(() => _isUploading = false);
+
+      _showAddExpenseForm(merchant, amount, date, status, reason, snippet, imageUrl);
+
+    } catch (e) {
+      if (imageUrl != null) {
+        final fileName = imageUrl.split('/').last;
+        await Supabase.instance.client.storage.from('receipts').remove([fileName]);
+      }
+      setState(() => _isUploading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Audit Error: $e"), backgroundColor: AppTheme.destructive),
+        );
+      }
+    }
+  }
+
+  Future<void> _finalizeDatabaseInsert(
+    String merchant, double amount, String date, String location, String justification, 
+    String aiStatus, String aiReason, String aiSnippet, String imageUrl
+  ) async {
+    setState(() => _isUploading = true);
+    try {
+      final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('claims').insert({
         'employee_id': userId,
         'merchant_name': merchant,
@@ -161,9 +177,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         'location': location,
         'justification': justification,
         'currency': 'USD',
-        'status': status,
-        'audit_reason': reason,
-        'policy_snippet': snippet,
+        'status': aiStatus,
+        'audit_reason': aiReason,
+        'policy_snippet': aiSnippet,
         'image_url': imageUrl,
       });
 
@@ -171,30 +187,25 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         _pickedFile = null;
         _isUploading = false;
       });
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      debugPrint("Submission Error: $e");
       setState(() => _isUploading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Error: $e"),
-            backgroundColor: AppTheme.destructive,
-            duration: const Duration(seconds: 6),
-          ),
+          SnackBar(content: Text("DB Error: $e"), backgroundColor: AppTheme.destructive),
         );
       }
     }
   }
 
-  void _showAddExpenseForm() {
-    final merchantController = TextEditingController();
-    final amountController = TextEditingController();
-    final dateController = TextEditingController();
+  void _showAddExpenseForm(String initMerchant, double initAmount, String initDate, String aiStatus, String aiReason, String aiSnippet, String imageUrl) async {
+    final merchantController = TextEditingController(text: initMerchant);
+    final amountController = TextEditingController(text: initAmount > 0 ? initAmount.toStringAsFixed(2) : '');
+    final dateController = TextEditingController(text: initDate != 'N/A' ? initDate : '');
     final locationController = TextEditingController();
     final justificationController = TextEditingController();
 
-    showModalBottomSheet(
+    final result = await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.card,
@@ -270,37 +281,32 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 controller: justificationController,
                 decoration: const InputDecoration(labelText: 'Justification'),
               ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    await _pickReceipt();
-                    setModalState(() {});
-                  },
-                  icon: const Icon(Icons.image_outlined),
-                  label: Text(
-                    _pickedFile == null
-                        ? 'Select Receipt Image'
-                        : 'Selected: ${_pickedFile!.name}',
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "AI Pre-Audit Result: ${aiStatus.toUpperCase()}\n$aiReason",
+                  style: TextStyle(
+                    fontStyle: FontStyle.italic,
+                    color: aiStatus == 'rejected' ? AppTheme.destructive : AppTheme.primary,
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _isUploading
                       ? null
                       : () {
-                          final amt =
-                              double.tryParse(amountController.text) ?? 0.0;
-                          _submitClaim(
-                            merchantController.text,
-                            amt,
-                            dateController.text,
-                            locationController.text,
-                            justificationController.text,
+                          final amt = double.tryParse(amountController.text) ?? 0.0;
+                          _finalizeDatabaseInsert(
+                             merchantController.text, amt, dateController.text, 
+                             locationController.text, justificationController.text, 
+                             aiStatus, aiReason, aiSnippet, imageUrl
                           );
                         },
                   child: _isUploading
@@ -312,7 +318,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                             strokeWidth: 2,
                           ),
                         )
-                      : const Text("Submit to AI Auditor"),
+                      : const Text("Confirm & Submit"),
                 ),
               ),
               const SizedBox(height: 32),
@@ -321,6 +327,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         ),
       ),
     );
+
+    if (result == null && mounted) {
+       // Ghost Receipt Rollback
+       final fileName = imageUrl.split('/').last;
+       await Supabase.instance.client.storage.from('receipts').remove([fileName]);
+    }
   }
 
   @override
@@ -470,8 +482,13 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddExpenseForm,
+      floatingActionButton: _isUploading ? const FloatingActionButton.extended(
+        onPressed: null,
+        backgroundColor: AppTheme.border,
+        label: Text("Analyzing..."),
+        icon: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+      ) : FloatingActionButton.extended(
+        onPressed: _startAIAuditFlow,
         backgroundColor: AppTheme.primary,
         foregroundColor: AppTheme.primaryForeground,
         icon: const Icon(Icons.add),
