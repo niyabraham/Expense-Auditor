@@ -6,7 +6,6 @@ import '../components/sidebar.dart';
 import '../components/header.dart';
 import '../components/stats_card.dart';
 import '../policy_data.dart';
-import '../models/claim_status.dart';
 import '../models/expense_claim.dart';
 import 'login_page.dart';
 

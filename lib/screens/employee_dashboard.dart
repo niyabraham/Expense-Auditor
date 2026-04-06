@@ -1,11 +1,10 @@
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
 import 'package:file_picker/file_picker.dart';
 
 import '../theme/app_theme.dart';
 import 'login_page.dart';
+import '../models/expense_claim.dart'; // Added strict typing model
 
 class EmployeeDashboard extends StatefulWidget {
   const EmployeeDashboard({super.key});
@@ -25,11 +24,13 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     super.initState();
     final userId = Supabase.instance.client.auth.currentUser!.id;
 
+    // FIX: Added .limit(50) to prevent unbounded data fetching
     _claimsStream = Supabase.instance.client
         .from('claims')
         .stream(primaryKey: ['id'])
         .eq('employee_id', userId)
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .limit(50); 
 
     _notificationChannel = Supabase.instance.client
         .channel('public:claims')
@@ -101,8 +102,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     if (result != null) setState(() => _pickedFile = result.files.first);
   }
 
-  /// Uploads the receipt and returns a record with both the fileName (for
-  /// rollback) and the public imageUrl. Returns null on failure.
   Future<({String fileName, String imageUrl})?> _uploadToSupabase() async {
     if (_pickedFile == null || _pickedFile!.bytes == null) return null;
     try {
@@ -125,7 +124,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     if (_pickedFile == null) return;
 
     setState(() => _isUploading = true);
-    // Track fileName explicitly so rollback is always reliable.
     String? uploadedFileName;
     String? imageUrl;
 
@@ -143,6 +141,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         },
       );
 
+      // FIX: Check mounted before acting on the async result
+      if (!mounted) return; 
+
       final aiResult = response.data;
       final merchant = aiResult['merchant'] ?? '';
       final amount =
@@ -159,7 +160,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           merchant, amount, date, status, reason, snippet, imageUrl,
           uploadedFileName: uploadedFileName);
     } catch (e) {
-      // ROLLBACK: Delete orphaned image from storage on any failure.
       if (uploadedFileName != null) {
         debugPrint(
             "Rolling back: Deleting orphaned image '$uploadedFileName' from storage...");
@@ -167,14 +167,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             .from('receipts')
             .remove([uploadedFileName]);
       }
+      
+      if (!mounted) return;
       setState(() => _isUploading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text("Audit Error: $e"),
-              backgroundColor: AppTheme.destructive),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text("Audit Error: $e"),
+            backgroundColor: AppTheme.destructive),
+      );
     }
   }
 
@@ -199,18 +199,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         'image_url': imageUrl,
       });
 
+      // FIX: Guard setState against async gaps
+      if (!mounted) return; 
+      
       setState(() {
         _pickedFile = null;
         _isUploading = false;
       });
-      if (mounted) Navigator.pop(context, true);
+      Navigator.pop(context, true);
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isUploading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("DB Error: $e"), backgroundColor: AppTheme.destructive),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("DB Error: $e"), backgroundColor: AppTheme.destructive),
+      );
     }
   }
 
@@ -323,9 +325,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       ? null
                       : () {
                           final amt = double.tryParse(amountController.text) ?? 0.0;
-                          // Client-side date-mismatch guard:
-                          // initDate is what the AI read from the physical receipt.
-                          // Block submission if the user altered it.
                           if (initDate != 'N/A' &&
                               dateController.text.isNotEmpty &&
                               dateController.text != initDate) {
@@ -365,7 +364,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
 
     if (result == null && mounted) {
-       // Ghost Receipt Rollback: use the explicit filename, not a fragile URL split.
        debugPrint("User dismissed form. Rolling back orphaned image '$uploadedFileName' from storage...");
        await Supabase.instance.client.storage.from('receipts').remove([uploadedFileName]);
     }
@@ -430,13 +428,16 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             );
           }
 
-          final claims = snapshot.data!;
+          // FIX: Eradicate Primitive Obsession by mapping to Data Models
+          final rawClaims = snapshot.data!;
+          final claims = rawClaims.map((json) => ExpenseClaim.fromJson(json)).toList();
+
           return ListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: claims.length,
             itemBuilder: (context, i) {
               final claim = claims[i];
-              final status = claim['status'] ?? 'pending';
+              final status = claim.status.toLowerCase();
               Color statusColor = status == 'approved'
                   ? AppTheme.success
                   : (status == 'rejected'
@@ -453,14 +454,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     child: Icon(Icons.receipt_outlined, color: statusColor),
                   ),
                   title: Text(
-                    claim['merchant_name'],
+                    claim.merchantName, // Now strictly typed!
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       color: AppTheme.foreground,
                     ),
                   ),
                   subtitle: Text(
-                    "${claim['currency']} ${claim['amount'].toStringAsFixed(2)}",
+                    "USD ${claim.amount.toStringAsFixed(2)}", 
                     style: const TextStyle(color: AppTheme.mutedForeground),
                   ),
                   trailing: Container(
@@ -502,7 +503,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              "AI Note: ${claim['audit_reason'] ?? 'Pending review'}",
+                              "AI Note: ${claim.auditReason}",
                               style: const TextStyle(
                                 fontStyle: FontStyle.italic,
                                 color: AppTheme.mutedForeground,
