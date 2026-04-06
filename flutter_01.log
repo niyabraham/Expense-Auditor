@@ -1,0 +1,163 @@
+Flutter crash report.
+Please report a bug at https://github.com/flutter/flutter/issues.
+
+## command
+
+flutter analyze --no-pub
+
+## exception
+
+_Exception: Exception: analysis server exited with code -1073740791 and output:
+[stdout] {"event":"server.connected","params":{"version":"1.40.0","pid":10324}}
+[stdout] {"id":"1"}
+[stdout] {"event":"analysis.errors","params":{"file":"C:\\Expense-Auditor\\analysis_options.yaml","errors":[]}}
+[stdout] {"event":"analysis.errors","params":{"file":"C:\\Expense-Auditor\\pubspec.yaml","errors":[]}}
+[stdout] {"event":"server.status","params":{"analysis":{"isAnalyzing":true}}}
+[stdout] {"event":"analysis.errors","params":{"file":"C:\\Expense-Auditor\\lib\\components\\header.dart","errors":[]}}
+[stdout] {"event":"analysis.errors","params":{"file":"C:\\Expense-Auditor\\lib\\components\\sidebar.dart","errors":[]}}
+[stdout] {"event":"analysis.errors","params":{"file":"C:\\Expense-Auditor\\lib\\components\\stats_card.dart","errors":[]}}
+[stderr] ../../runtime/vm/zone.cc: 96: error: Out of memory.
+[stderr] version=3.10.3 (stable) (Tue Dec 2 01:04:53 2025 -0800) on "windows_x64"
+[stderr] pid=10324, thread=16176, isolate_group=main(0000027392056670), isolate=(nil)(0000000000000000)
+[stderr] os=windows, arch=x64, comp=no, sim=no
+[stderr] isolate_instructions=27396b00000, vm_instructions=7ff7cb038080
+[stderr] fp=9c776fd910, sp=9c776fd8c8, pc=7ff7cb31da13
+[stderr]   pc 0x00007ff7cb31da13 fp 0x0000009c776fd910 C:\flutter\bin\cache\dart-sdk\bin\dartvm.exe+0x2eda13
+[stderr] -- End of DumpStackTrace
+[stderr] === Crash occurred when compiling package:analyzer/src/context/source.dart_SourceFactoryImpl__internalResolveUri@889114459 in optimizing JIT mode in unknown pass
+[stderr] === Flow Graph not available
+
+```
+```
+
+## flutter doctor
+
+```
+[32m[✓][39m Flutter (Channel
+    stable, 3.38.4, on
+    Microsoft Windows
+    [Version
+    10.0.26200.8037],
+    locale en-IN) [691ms]
+    [32m•[39m Flutter version
+      3.38.4 on channel
+      stable at C:\flutter
+    [32m•[39m Upstream repository
+      https://github.com/f
+      lutter/flutter.git
+    [32m•[39m Framework revision
+      66dd93f9a2 (4 months
+      ago), 2025-12-03
+      14:56:10 -0800
+    [32m•[39m Engine revision
+      a5cb96369e
+    [32m•[39m Dart version 3.10.3
+    [32m•[39m DevTools version
+      2.51.1
+    [32m•[39m Feature flags:
+      enable-web,
+      enable-linux-desktop
+      ,
+      enable-macos-desktop
+      ,
+      enable-windows-deskt
+      op, enable-android,
+      enable-ios,
+      cli-animations,
+      enable-native-assets
+      ,
+      omit-legacy-version-
+      file,
+      enable-lldb-debuggin
+      g
+
+[32m[✓][39m Windows Version (11
+    Home Single Language
+    64-bit, 25H2, 2009)
+    [3.9s]
+
+[32m[✓][39m Android toolchain -
+    develop for Android
+    devices (Android SDK
+    version 36.1.0) [7.0s]
+    [32m•[39m Android SDK at
+      C:\Users\niyaa\AppDa
+      ta\Local\Android\sdk
+    [32m•[39m Emulator version
+      36.3.10.0 (build_id
+      14472402) (CL:N/A)
+    [32m•[39m Platform android-36,
+      build-tools 36.1.0
+    [32m•[39m Java binary at:
+      C:\Program
+      Files\Android\Androi
+      d
+      Studio\jbr\bin\java
+      This is the JDK
+      bundled with the
+      latest Android
+      Studio installation
+      on this machine.
+      To manually set the
+      JDK path, use:
+      `flutter config
+      --jdk-dir="path/to/j
+      dk"`.
+    [32m•[39m Java version OpenJDK
+      Runtime Environment
+      (build
+      21.0.8+-14196175-b10
+      38.72)
+    [32m•[39m All Android licenses
+      accepted.
+
+[32m[✓][39m Chrome - develop for
+    the web [297ms]
+    [32m•[39m Chrome at C:\Program
+      Files\Google\Chrome\
+      Application\chrome.e
+      xe
+
+[32m[✓][39m Visual Studio -
+    develop Windows apps
+    (Visual Studio Build
+    Tools 2026 18.0.2)
+    [294ms]
+    [32m•[39m Visual Studio at
+      C:\Program Files
+      (x86)\Microsoft
+      Visual
+      Studio\18\BuildTools
+    [32m•[39m Visual Studio Build
+      Tools 2026 version
+      18.0.11222.15
+    [32m•[39m Windows 10 SDK
+      version 10.0.26100.0
+
+[32m[✓][39m Connected device (3
+    available) [591ms]
+    [32m•[39m Windows (desktop) •
+      windows •
+      windows-x64    •
+      Microsoft Windows
+      [Version
+      10.0.26200.8037]
+    [32m•[39m Chrome (web)      •
+      chrome  •
+      web-javascript •
+      Google Chrome
+      146.0.7680.178
+    [32m•[39m Edge (web)        •
+      edge    •
+      web-javascript •
+      Microsoft Edge
+      146.0.3856.97
+
+[32m[✓][39m Network resources
+    [637ms]
+    [32m•[39m All expected network
+      resources are
+      available.
+
+[32m•[39m No issues found!
+```

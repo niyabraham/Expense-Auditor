@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  expense-auditor-frontend:
+    build: .
+    ports:
+      - "8080:80"
+    restart: always
+    container_name: aetheris_web

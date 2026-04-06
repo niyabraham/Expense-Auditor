@@ -101,7 +101,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     if (result != null) setState(() => _pickedFile = result.files.first);
   }
 
-  Future<String?> _uploadToSupabase() async {
+  /// Uploads the receipt and returns a record with both the fileName (for
+  /// rollback) and the public imageUrl. Returns null on failure.
+  Future<({String fileName, String imageUrl})?> _uploadToSupabase() async {
     if (_pickedFile == null || _pickedFile!.bytes == null) return null;
     try {
       final fileName =
@@ -109,9 +111,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       await Supabase.instance.client.storage
           .from('receipts')
           .uploadBinary(fileName, _pickedFile!.bytes!);
-      return Supabase.instance.client.storage
+      final imageUrl = Supabase.instance.client.storage
           .from('receipts')
           .getPublicUrl(fileName);
+      return (fileName: fileName, imageUrl: imageUrl);
     } catch (e) {
       return null;
     }
@@ -120,43 +123,56 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Future<void> _startAIAuditFlow() async {
     await _pickReceipt();
     if (_pickedFile == null) return;
-    
+
     setState(() => _isUploading = true);
+    // Track fileName explicitly so rollback is always reliable.
+    String? uploadedFileName;
     String? imageUrl;
-    
+
     try {
-      imageUrl = await _uploadToSupabase();
-      if (imageUrl == null) throw Exception("Upload to Supabase Storage failed");
-      
+      final upload = await _uploadToSupabase();
+      if (upload == null) throw Exception("Upload to Supabase Storage failed");
+      uploadedFileName = upload.fileName;
+      imageUrl = upload.imageUrl;
+
       final response = await Supabase.instance.client.functions.invoke(
         'audit_receipt',
         body: {
           'imageUrl': imageUrl,
-          'location': 'Auto-detecting...'
+          'location': 'Auto-detecting...',
         },
       );
-      
+
       final aiResult = response.data;
       final merchant = aiResult['merchant'] ?? '';
-      final amount = double.tryParse(aiResult['amount']?.toString() ?? '0') ?? 0.0;
+      final amount =
+          double.tryParse(aiResult['amount']?.toString() ?? '0') ?? 0.0;
       final date = aiResult['date'] ?? '';
-      final status = aiResult['status']?.toString().toLowerCase() ?? 'flagged';
-      final reason = aiResult['reason'] ?? 'AI Analysis required manual review.';
+      final status =
+          aiResult['status']?.toString().toLowerCase() ?? 'flagged';
+      final reason =
+          aiResult['reason'] ?? 'AI Analysis required manual review.';
       final snippet = aiResult['policy_snippet'] ?? 'N/A';
 
       setState(() => _isUploading = false);
-
-      _showAddExpenseForm(merchant, amount, date, status, reason, snippet, imageUrl);
-
+      _showAddExpenseForm(
+          merchant, amount, date, status, reason, snippet, imageUrl,
+          uploadedFileName: uploadedFileName);
     } catch (e) {
-      if (imageUrl != null) {
-        final fileName = imageUrl.split('/').last;
-        await Supabase.instance.client.storage.from('receipts').remove([fileName]);
+      // ROLLBACK: Delete orphaned image from storage on any failure.
+      if (uploadedFileName != null) {
+        debugPrint(
+            "Rolling back: Deleting orphaned image '$uploadedFileName' from storage...");
+        await Supabase.instance.client.storage
+            .from('receipts')
+            .remove([uploadedFileName]);
       }
       setState(() => _isUploading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Audit Error: $e"), backgroundColor: AppTheme.destructive),
+          SnackBar(
+              content: Text("Audit Error: $e"),
+              backgroundColor: AppTheme.destructive),
         );
       }
     }
@@ -198,7 +214,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
-  void _showAddExpenseForm(String initMerchant, double initAmount, String initDate, String aiStatus, String aiReason, String aiSnippet, String imageUrl) async {
+  void _showAddExpenseForm(
+    String initMerchant, double initAmount, String initDate,
+    String aiStatus, String aiReason, String aiSnippet, String imageUrl, {
+    required String uploadedFileName,
+  }) async {
     final merchantController = TextEditingController(text: initMerchant);
     final amountController = TextEditingController(text: initAmount > 0 ? initAmount.toStringAsFixed(2) : '');
     final dateController = TextEditingController(text: initDate != 'N/A' ? initDate : '');
@@ -284,7 +304,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.1),
+                  color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -303,6 +323,22 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       ? null
                       : () {
                           final amt = double.tryParse(amountController.text) ?? 0.0;
+                          // Client-side date-mismatch guard:
+                          // initDate is what the AI read from the physical receipt.
+                          // Block submission if the user altered it.
+                          if (initDate != 'N/A' &&
+                              dateController.text.isNotEmpty &&
+                              dateController.text != initDate) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  "⚠️ Date Mismatch: The date you entered differs from the receipt. Use the AI-extracted date.",
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            return;
+                          }
                           _finalizeDatabaseInsert(
                              merchantController.text, amt, dateController.text, 
                              locationController.text, justificationController.text, 
@@ -329,9 +365,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
 
     if (result == null && mounted) {
-       // Ghost Receipt Rollback
-       final fileName = imageUrl.split('/').last;
-       await Supabase.instance.client.storage.from('receipts').remove([fileName]);
+       // Ghost Receipt Rollback: use the explicit filename, not a fragile URL split.
+       debugPrint("User dismissed form. Rolling back orphaned image '$uploadedFileName' from storage...");
+       await Supabase.instance.client.storage.from('receipts').remove([uploadedFileName]);
     }
   }
 
@@ -345,11 +381,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             icon: const Icon(Icons.logout, color: AppTheme.mutedForeground),
             onPressed: () async {
               await Supabase.instance.client.auth.signOut();
-              if (mounted)
+              if (mounted) {
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (_) => const LoginPage()),
                 );
+              }
             },
           ),
         ],
@@ -358,17 +395,17 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         stream: _claimsStream,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return Center(
+            return const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.wifi_off,
                     size: 48,
                     color: AppTheme.mutedForeground,
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
+                  SizedBox(height: 16),
+                  Text(
                     "Connection lost. Reconnecting...",
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
@@ -412,7 +449,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                   collapsedIconColor: AppTheme.mutedForeground,
                   iconColor: AppTheme.primary,
                   leading: CircleAvatar(
-                    backgroundColor: statusColor.withOpacity(0.1),
+                    backgroundColor: statusColor.withValues(alpha: 0.1),
                     child: Icon(Icons.receipt_outlined, color: statusColor),
                   ),
                   title: Text(
@@ -432,9 +469,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
+                      color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: statusColor.withOpacity(0.2)),
+                      border: Border.all(color: statusColor.withValues(alpha: 0.2)),
                     ),
                     child: Text(
                       status.toUpperCase(),

@@ -13,7 +13,7 @@ serve(async (req) => {
   }
 
   try {
-    const { imageUrl, location } = await req.json();
+    const { imageUrl, location, date: employeeClaimedDate } = await req.json();
     
     // Server-side fetching to prevent OOM
     console.log("Fetching image from URL: ", imageUrl);
@@ -31,23 +31,29 @@ serve(async (req) => {
       
       CLAIM CONTEXT:
       Location: ${location}
+      Employee-Claimed Expense Date: ${employeeClaimedDate ?? 'Auto-detecting...'}
       
       CRITICAL DIRECTIVE: You MUST verify the receipt details using ONLY your eyes on the uploaded image. Extract the Merchant, Amount, and Date from the image.
+      
+      CRITICAL DATE FRAUD CHECK: If the employee provided a claimed date ("${employeeClaimedDate}"), you must physically read the date printed on the receipt image. If the date on the receipt does NOT match this claimed date, you MUST flag this as "Date Mismatch Fraud". If no claimed date was provided (i.e., "Auto-detecting..."), skip this specific fraud check and only extract the date from the receipt.
       
       You MUST output a valid JSON object with EXACTLY these keys in this EXACT order:
       {
         "merchant": "Extracted Merchant Name from the receipt. If none found, write 'UNKNOWN'.",
         "amount": "Extracted Numerical Amount as a float (e.g. 15.99). If not found, write 0.0",
         "date": "Extracted Date (YYYY-MM-DD). If not found, write 'N/A'.",
+        "receipt_date": "The exact date you can visually read printed on the physical receipt. Write 'NOT_FOUND' if unreadable.",
+        "date_match": "Compare the receipt date you read against the employee-claimed date '${employeeClaimedDate}'. Write 'YES' if they match, 'NO' if they do not match, or 'N/A' if no claimed date was provided.",
         "visual_check": "Describe the pixels of the image. Can you clearly read a merchant name and a price? If the image is solid black, blank, or a random photo, you MUST write exactly 'NO_RECEIPT_FOUND'.",
         "math_check": "Is the extracted amount strictly greater than the policy limit for ${location}? Write 'YES' or 'NO'.",
         "policy_snippet": "Extract the verbatim sentence from the policy justifying the decision. Output 'N/A' if the image is blank.",
-        "reason": "Write a 1-sentence summary of why this passed or failed.",
+        "reason": "Write a 1-sentence summary of why this passed or failed, mentioning Date Mismatch only if applicable.",
         "status": "approved, flagged, or rejected"
       }
       
-      ABSOLUTE OVERRIDES:
+      ABSOLUTE OVERRIDES (applied in this order, highest priority first):
       - If visual_check contains 'NO_RECEIPT_FOUND', the status MUST be "rejected". Do not trust the employee's input.
+      - If date_match is 'NO', the status MUST be "rejected" and the reason MUST mention "Date Mismatch Fraud".
       - If math_check is 'YES', the status MUST be "rejected".`;
   
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {

@@ -25,4 +25,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - .env  # This tells Flutter to include your secrets file in the build
+    - assets/.env

@@ -32,12 +32,10 @@ class AppTheme {
         primary: primary,
         secondary: secondary,
         surface: card,
-        background: background,
         error: destructive,
         onPrimary: primaryForeground,
         onSecondary: secondaryForeground,
         onSurface: cardForeground,
-        onBackground: foreground,
         onError: primaryForeground,
       ),
       cardTheme: CardThemeData(

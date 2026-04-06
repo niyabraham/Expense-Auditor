@@ -7,6 +7,7 @@ import '../components/header.dart';
 import '../components/stats_card.dart';
 import '../policy_data.dart';
 import '../models/claim_status.dart';
+import '../models/expense_claim.dart';
 import 'login_page.dart';
 
 class AuditorDashboard extends StatefulWidget {
@@ -64,11 +65,12 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
 
   void _handleLogout() async {
     await Supabase.instance.client.auth.signOut();
-    if (mounted)
+    if (mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const LoginPage()),
       );
+    }
   }
 
   @override
@@ -104,10 +106,14 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                   child: StreamBuilder<List<Map<String, dynamic>>>(
                     stream: _allClaimsStream,
                     builder: (context, snapshot) {
-                      if (!snapshot.hasData)
+                      if (!snapshot.hasData) {
                         return const Center(child: CircularProgressIndicator());
+                      }
 
-                      final claims = snapshot.data!;
+                  final rawData = snapshot.data!;
+                      final List<ExpenseClaim> claims = rawData
+                          .map((json) => ExpenseClaim.fromJson(json))
+                          .toList();
                       return _buildActiveScreen(claims);
                     },
                   ),
@@ -120,14 +126,14 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     );
   }
 
-  Widget _buildActiveScreen(List<Map<String, dynamic>> claims) {
+  Widget _buildActiveScreen(List<ExpenseClaim> claims) {
     switch (_selectedIndex) {
       case 0:
         return _buildDashboardContent(claims);
       case 1:
       case 2:
         final displayClaims = _selectedIndex == 1 
-            ? claims.where((c) => c['status'] == 'flagged' || c['status'] == 'rejected').toList() 
+            ? claims.where((c) => c.status == 'flagged' || c.status == 'rejected').toList() 
             : claims;
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -189,17 +195,17 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
           ),
         );
       case 5:
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+        return const SingleChildScrollView(
+          padding: EdgeInsets.all(24),
           child: Card(
             child: Padding(
-              padding: const EdgeInsets.all(24.0),
+              padding: EdgeInsets.all(24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Corporate Expense Policy (Aetheris)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
-                  const SizedBox(height: 24),
-                  Text(AetherisPolicy.fullText, style: const TextStyle(color: AppTheme.mutedForeground, height: 1.6)),
+                  Text("Corporate Expense Policy (Aetheris)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
+                  SizedBox(height: 24),
+                  Text(AetherisPolicy.fullText, style: TextStyle(color: AppTheme.mutedForeground, height: 1.6)),
                 ],
               ),
             ),
@@ -216,7 +222,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     }
   }
 
-  Widget _buildDashboardContent(List<Map<String, dynamic>> claims) {
+  Widget _buildDashboardContent(List<ExpenseClaim> claims) {
     if (_dashboardStats == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -350,7 +356,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
   }
 
   // --- UI HELPER: DYNAMIC BAR CHART ---
-  Widget _buildDynamicExpenseChart(List<Map<String, dynamic>> claims) {
+  Widget _buildDynamicExpenseChart(List<ExpenseClaim> claims) {
     Map<String, dynamic> rawMonthly = _dashboardStats?['monthly_spend'] ?? {};
     
     // 1. Initialize an empty map for all 12 months
@@ -383,7 +389,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
               backDrawRodData: BackgroundBarChartRodData(
                 show: true,
                 toY: maxY,
-                color: AppTheme.border.withOpacity(0.5),
+                color: AppTheme.border.withValues(alpha: 0.5),
               ),
             ),
           ],
@@ -412,7 +418,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
                   maxY: maxY, // Dynamic Maximum Bounds
-                  barTouchData: BarTouchData(enabled: false),
+                  barTouchData: const BarTouchData(enabled: false),
                   borderData: FlBorderData(show: false),
                   gridData: FlGridData(
                     show: true,
@@ -538,11 +544,11 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     );
   }
 
-  Widget _buildQueueList(List<Map<String, dynamic>> claims) {
-    List<Map<String, dynamic>> sorted = List.from(claims);
+  Widget _buildQueueList(List<ExpenseClaim> claims) {
+    List<ExpenseClaim> sorted = List.from(claims);
     sorted.sort((a, b) {
-      int p(s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
-      return p(a['status']).compareTo(p(b['status']));
+      int p(String s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
+      return p(a.status).compareTo(p(b.status));
     });
 
     return ListView.builder(
@@ -551,7 +557,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
       itemCount: sorted.length,
       itemBuilder: (context, index) {
         final claim = sorted[index];
-        final status = claim['status'] ?? 'pending';
+        final status = claim.status;
         Color sColor = status == 'approved'
             ? AppTheme.success
             : (status == 'rejected' ? AppTheme.destructive : AppTheme.warning);
@@ -563,18 +569,18 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
           child: ListTile(
             contentPadding: EdgeInsets.zero,
             leading: CircleAvatar(
-              backgroundColor: sColor.withOpacity(0.1),
+              backgroundColor: sColor.withValues(alpha: 0.1),
               child: Icon(Icons.receipt_outlined, color: sColor, size: 20),
             ),
             title: Text(
-              "${claim['merchant_name']}",
+              claim.merchantName,
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: AppTheme.foreground,
               ),
             ),
             subtitle: Text(
-              "ID: ${claim['id'].toString().substring(0, 8)} • Date: ${claim['expense_date'] ?? 'N/A'}",
+              "ID: ${claim.id.substring(0, 8)} • Date: ${claim.date}",
               style: const TextStyle(
                 color: AppTheme.mutedForeground,
                 fontSize: 12,
@@ -584,7 +590,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  "${claim['currency']} ${claim['amount'].toStringAsFixed(2)}",
+                  "${claim.currency} ${claim.amount.toStringAsFixed(2)}",
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     color: AppTheme.foreground,
@@ -599,9 +605,9 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: sColor.withOpacity(0.1),
+                    color: sColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: sColor.withOpacity(0.2)),
+                    border: Border.all(color: sColor.withValues(alpha: 0.2)),
                   ),
                   child: Text(
                     status.toUpperCase(),
@@ -635,7 +641,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
 }
 
 class AuditDetailView extends StatelessWidget {
-  final Map<String, dynamic> claim;
+  final ExpenseClaim claim;
 
   const AuditDetailView({super.key, required this.claim});
 
@@ -643,13 +649,13 @@ class AuditDetailView extends StatelessWidget {
     await Supabase.instance.client
         .from('claims')
         .update({'status': newStatus})
-        .eq('id', claim['id']);
+        .eq('id', claim.id);
     if (context.mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final status = claim['status'].toString();
+    final status = claim.status;
     final sColor = status == 'approved'
         ? AppTheme.success
         : (status == 'rejected' ? AppTheme.destructive : AppTheme.warning);
@@ -695,12 +701,12 @@ class AuditDetailView extends StatelessWidget {
     return Container(
       color: Colors.black,
       child: Center(
-        child: claim['image_url'] != null
+        child: claim.imageUrl != null
             ? InteractiveViewer(
                 panEnabled: true,
                 minScale: 0.5,
                 maxScale: 4,
-                child: Image.network(claim['image_url'], fit: BoxFit.contain),
+                child: Image.network(claim.imageUrl!, fit: BoxFit.contain),
               )
             : const Icon(Icons.receipt_long, size: 100, color: AppTheme.border),
       ),
@@ -731,21 +737,18 @@ class AuditDetailView extends StatelessWidget {
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
-                  _infoRow("Merchant", claim['merchant_name']),
+                  _infoRow("Merchant", claim.merchantName),
                   const Divider(),
                   _infoRow(
                     "Amount",
-                    "${claim['currency']} ${claim['amount'].toStringAsFixed(2)}",
+                    "${claim.currency} ${claim.amount.toStringAsFixed(2)}",
                   ),
                   const Divider(),
-                  _infoRow(
-                    "Date Claimed",
-                    claim['expense_date'] ?? 'Not Specified',
-                  ),
+                  _infoRow("Date Claimed", claim.date),
                   const Divider(),
-                  _infoRow("Location", claim['location'] ?? 'Not Specified'),
+                  _infoRow("Location", claim.location ?? 'Not Specified'),
                   const Divider(),
-                  _infoRow("Justification", claim['justification'] ?? 'N/A'),
+                  _infoRow("Justification", claim.justification ?? 'N/A'),
                 ],
               ),
             ),
@@ -765,9 +768,9 @@ class AuditDetailView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.05),
+              color: statusColor.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: statusColor.withOpacity(0.3)),
+              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -784,7 +787,7 @@ class AuditDetailView extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      "STATUS: ${claim['status'].toString().toUpperCase()}",
+                      "STATUS: ${claim.status.toUpperCase()}",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: statusColor,
@@ -795,7 +798,7 @@ class AuditDetailView extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  claim['audit_reason'] ?? "Awaiting AI Analysis...",
+                  claim.auditReason,
                   style: const TextStyle(
                     fontStyle: FontStyle.italic,
                     color: AppTheme.foreground,
@@ -823,7 +826,7 @@ class AuditDetailView extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '"${claim['policy_snippet'] ?? 'N/A'}"',
+                    '"${claim.policySnippet ?? 'N/A'}"',
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 13,

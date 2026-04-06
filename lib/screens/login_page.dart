@@ -82,7 +82,7 @@ class _LoginPageState extends State<LoginPage> {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppTheme.border),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20),
+              BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 20),
             ],
           ),
           child: Column(
@@ -91,7 +91,7 @@ class _LoginPageState extends State<LoginPage> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.1),
+                  color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: const Icon(

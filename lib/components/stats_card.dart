@@ -29,7 +29,7 @@ class StatsCard extends StatelessWidget {
     final changeDisplay = "${change.abs()}%";
 
     return Card(
-      shadowColor: Colors.black.withOpacity(0.05),
+      shadowColor: Colors.black.withValues(alpha: 0.05),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
