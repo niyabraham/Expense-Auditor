@@ -14,7 +14,7 @@ class ExpenseClaim {
 
   ExpenseClaim({
     required this.id,
-    required this.userId, // Added this
+    required this.userId, // Added this field
     required this.merchantName,
     required this.amount,
     required this.date,
@@ -30,7 +30,7 @@ class ExpenseClaim {
   factory ExpenseClaim.fromJson(Map<String, dynamic> json) {
     return ExpenseClaim(
       id: json['id'].toString(),
-      userId: json['user_id']?.toString() ?? 'unknown', // Added this mapping
+      userId: json['user_id']?.toString() ?? 'unknown', // Map the user_id from DB
       merchantName: json['merchant_name'] ?? 'Unknown Merchant',
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       date: json['expense_date'] ?? 'N/A',

@@ -179,10 +179,9 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
           ),
         );
       case 4:
-        // --- UPDATED: EMPLOYEE DIRECTORY SECTION ---
+        // Group claims by employee ID
         final Map<String, List<ExpenseClaim>> employeeMap = {};
         for (var claim in claims) {
-          // Using userId from updated model
           employeeMap.putIfAbsent(claim.userId, () => []).add(claim);
         }
         final employeeIds = employeeMap.keys.toList();
@@ -211,10 +210,10 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                         final id = employeeIds[index];
                         final empClaims = employeeMap[id]!;
                         
-                        String name = "External Contractor";
+                        // Mapping IDs to Names for the demo
+                        String name = "Marcus Johnson";
                         if (id == 'e60a3f01-4473-4560-b6e8-fea7342bf6b5') name = "David Miller";
                         if (id == '313a1373-f6f7-44ac-bf51-2ddf537f7974') name = "Sarah Chen";
-                        if (id == 'f41188bc-eae0-43a5-a455-1c4eab4f5301') name = "Marcus Johnson";
 
                         return Container(
                           decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
@@ -357,9 +356,42 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
               height: 250,
               child: isEmpty ? const Center(child: Text("No data yet")) : PieChart(
                 PieChartData(sections: [
-                  PieChartSectionData(color: AppTheme.success, value: approved.toDouble(), title: 'Approved', radius: 50),
-                  PieChartSectionData(color: AppTheme.warning, value: flagged.toDouble(), title: 'Flagged', radius: 50),
-                  PieChartSectionData(color: AppTheme.destructive, value: rejected.toDouble(), title: 'Rejected', radius: 50),
+                  PieChartSectionData(
+                    color: AppTheme.success,
+                    value: approved.toDouble(),
+                    title: 'Approved\n($approved)',
+                    showTitle: true,
+                    titleStyle: const TextStyle(
+                      color: AppTheme.foreground,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    radius: 58,
+                  ),
+                  PieChartSectionData(
+                    color: AppTheme.warning,
+                    value: flagged.toDouble(),
+                    title: 'Flagged\n($flagged)',
+                    showTitle: true,
+                    titleStyle: const TextStyle(
+                      color: AppTheme.foreground,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    radius: 58,
+                  ),
+                  PieChartSectionData(
+                    color: AppTheme.destructive,
+                    value: rejected.toDouble(),
+                    title: 'Rejected\n($rejected)',
+                    showTitle: true,
+                    titleStyle: const TextStyle(
+                      color: AppTheme.foreground,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    radius: 58,
+                  ),
                 ])
               )
             ),
@@ -376,12 +408,41 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
       itemCount: claims.length,
       itemBuilder: (context, index) {
         final claim = claims[index];
+        final status = claim.status.toLowerCase();
+        final Color statusColor = switch (status) {
+          'approved' => AppTheme.success,
+          'flagged' => AppTheme.warning,
+          'rejected' => AppTheme.destructive,
+          _ => AppTheme.mutedForeground,
+        };
         return ListTile(
           title: Text(claim.merchantName, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.foreground)),
           subtitle: Text("Date: ${claim.date}", style: const TextStyle(color: AppTheme.mutedForeground)),
-          trailing: OutlinedButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))),
-            child: const Text("Review"),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: statusColor),
+                ),
+                child: Text(
+                  claim.status.toUpperCase(),
+                  style: TextStyle(
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))),
+                child: const Text("Review"),
+              ),
+            ],
           ),
         );
       },

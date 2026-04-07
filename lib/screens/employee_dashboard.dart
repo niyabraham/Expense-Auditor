@@ -4,7 +4,7 @@ import 'package:file_picker/file_picker.dart';
 
 import '../theme/app_theme.dart';
 import 'login_page.dart';
-import '../models/expense_claim.dart'; // Added strict typing model
+import '../models/expense_claim.dart';
 
 class EmployeeDashboard extends StatefulWidget {
   const EmployeeDashboard({super.key});
@@ -24,13 +24,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     super.initState();
     final userId = Supabase.instance.client.auth.currentUser!.id;
 
-    // FIX: Added .limit(50) to prevent unbounded data fetching
     _claimsStream = Supabase.instance.client
         .from('expense_claims')
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
         .order('created_at', ascending: false)
-        .limit(50); 
+        .limit(50);
 
     _notificationChannel = Supabase.instance.client
         .channel('public:claims')
@@ -40,43 +39,13 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           table: 'expense_claims',
           callback: (payload) {
             final newRecord = payload.newRecord;
-            final oldRecord = payload.oldRecord;
-
-            if (newRecord['employee_id'] == userId &&
-                newRecord['status'] != oldRecord['status']) {
+            if (newRecord['user_id'] == userId) {
               final status = newRecord['status'].toString().toUpperCase();
-              final merchant = newRecord['merchant_name'];
-              final color = status == 'APPROVED'
-                  ? AppTheme.success
-                  : AppTheme.destructive;
-
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Row(
-                      children: [
-                        Icon(
-                          status == 'APPROVED'
-                              ? Icons.check_circle
-                              : Icons.cancel,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            "UPDATE: Your $merchant claim was $status!",
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    backgroundColor: color,
-                    behavior: SnackBarBehavior.floating,
-                    margin: const EdgeInsets.only(top: 20, left: 20, right: 20),
-                    duration: const Duration(seconds: 6),
+                    content: Text("Claim for ${newRecord['merchant_name']} is now $status"),
+                    backgroundColor: status == 'APPROVED' ? AppTheme.success : AppTheme.destructive,
                   ),
                 );
               }
@@ -106,8 +75,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Future<({String fileName, String imageUrl})?> _uploadToSupabase() async {
     if (_pickedFile == null || _pickedFile!.bytes == null) return null;
     try {
-      final fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_${_pickedFile!.name}';
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${_pickedFile!.name}';
       await Supabase.instance.client.storage
           .from('receipts')
           .uploadBinary(fileName, _pickedFile!.bytes!);
@@ -117,65 +85,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       return (fileName: fileName, imageUrl: imageUrl);
     } catch (e) {
       return null;
-    }
-  }
-
-  Future<void> _startAIAuditFlow() async {
-    await _pickReceipt();
-    if (_pickedFile == null) return;
-
-    setState(() => _isUploading = true);
-    String? uploadedFileName;
-    String? imageUrl;
-
-    try {
-      final upload = await _uploadToSupabase();
-      if (upload == null) throw Exception("Upload to Supabase Storage failed");
-      uploadedFileName = upload.fileName;
-      imageUrl = upload.imageUrl;
-
-      final response = await Supabase.instance.client.functions.invoke(
-        'audit_receipt',
-        body: {
-          'imageUrl': imageUrl,
-          'location': 'Auto-detecting...',
-        },
-      );
-
-      // FIX: Check mounted before acting on the async result
-      if (!mounted) return; 
-
-      final aiResult = response.data;
-      final merchant = aiResult['merchant'] ?? '';
-      final amount =
-          double.tryParse(aiResult['amount']?.toString() ?? '0') ?? 0.0;
-      final date = aiResult['date'] ?? '';
-      final status =
-          aiResult['status']?.toString().toLowerCase() ?? 'flagged';
-      final reason =
-          aiResult['reason'] ?? 'AI Analysis required manual review.';
-      final snippet = aiResult['policy_snippet'] ?? 'N/A';
-
-      setState(() => _isUploading = false);
-      _showAddExpenseForm(
-          merchant, amount, date, status, reason, snippet, imageUrl,
-          uploadedFileName: uploadedFileName);
-    } catch (e) {
-      if (uploadedFileName != null) {
-        debugPrint(
-            "Rolling back: Deleting orphaned image '$uploadedFileName' from storage...");
-        await Supabase.instance.client.storage
-            .from('receipts')
-            .remove([uploadedFileName]);
-      }
-      
-      if (!mounted) return;
-      setState(() => _isUploading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text("Audit Error: $e"),
-            backgroundColor: AppTheme.destructive),
-      );
     }
   }
 
@@ -200,9 +109,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         'image_url': imageUrl,
       });
 
-      // FIX: Guard setState against async gaps
-      if (!mounted) return; 
-      
+      if (!mounted) return;
       setState(() {
         _pickedFile = null;
         _isUploading = false;
@@ -218,156 +125,169 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   }
 
   void _showAddExpenseForm(
-    String initMerchant, double initAmount, String initDate,
-    String aiStatus, String aiReason, String aiSnippet, String imageUrl, {
-    required String uploadedFileName,
-  }) async {
+    String initMerchant, 
+    double initAmount, 
+    String initDate,
+    String aiStatus, 
+    String aiReason, 
+    String aiSnippet, 
+    String imageUrl,
+  ) async {
     final merchantController = TextEditingController(text: initMerchant);
     final amountController = TextEditingController(text: initAmount > 0 ? initAmount.toStringAsFixed(2) : '');
     final dateController = TextEditingController(text: initDate != 'N/A' ? initDate : '');
     final locationController = TextEditingController();
     final justificationController = TextEditingController();
 
+    String effectiveStatus = aiStatus;
+    String effectiveReason = aiReason;
+    String effectiveSnippet = aiSnippet;
+    String effectiveImageUrl = imageUrl;
+    String? uploadedFileName;
+
+    bool aiStarted = false;
+    bool aiCompleted = false;
+
     final result = await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 20,
-            right: 20,
-            top: 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Submit New Expense',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.foreground,
+        builder: (context, setModalState) {
+          if (!aiStarted) {
+            aiStarted = true;
+            Future.microtask(() async {
+              try {
+                final upload = await _uploadToSupabase();
+                if (upload == null) throw Exception("Upload failed");
+                uploadedFileName = upload.fileName;
+                effectiveImageUrl = upload.imageUrl;
+
+                final response = await Supabase.instance.client.functions.invoke(
+                  'audit_receipt',
+                  body: {'imageUrl': effectiveImageUrl, 'location': 'Detecting...'},
+                );
+
+                final data = response.data;
+                setModalState(() {
+                  merchantController.text = data['merchant'] ?? '';
+                  amountController.text = data['amount']?.toString() ?? '';
+                  dateController.text = data['date'] ?? '';
+                  effectiveStatus = data['status'] ?? 'flagged';
+                  effectiveReason = data['reason'] ?? 'Manual check required';
+                  effectiveSnippet = data['policy_snippet'] ?? 'N/A';
+                  aiCompleted = true;
+                });
+              } catch (e) {
+                if (mounted) {
+                  setModalState(() {
+                    effectiveStatus = 'flagged';
+                    effectiveReason = "AI Analysis failed. Please enter manually.";
+                    aiCompleted = true;
+                  });
+                }
+              }
+            });
+          }
+
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Submit New Expense', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
+                const SizedBox(height: 16),
+                TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
+                const SizedBox(height: 12),
+                TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: dateController, 
+                  readOnly: true, 
+                  decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD)', suffixIcon: Icon(Icons.calendar_today)),
+                  onTap: () async {
+                    DateTime? picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2000), lastDate: DateTime(2100));
+                    if (picked != null) setModalState(() => dateController.text = picked.toString().split(' ')[0]);
+                  },
                 ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: merchantController,
-                decoration: const InputDecoration(labelText: 'Merchant'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amountController,
-                decoration: const InputDecoration(labelText: 'Amount'),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: dateController,
-                readOnly: true,
-                decoration: const InputDecoration(
-                  labelText: 'Date of Expense (YYYY-MM-DD)',
-                  suffixIcon: Icon(
-                    Icons.calendar_today,
-                    color: AppTheme.mutedForeground,
+                const SizedBox(height: 12),
+                TextField(controller: locationController, decoration: const InputDecoration(labelText: 'Location')),
+                const SizedBox(height: 12),
+                TextField(controller: justificationController, decoration: const InputDecoration(labelText: 'Justification')),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                  child: Text(
+                    aiCompleted ? "AI Result: ${effectiveStatus.toUpperCase()}\n$effectiveReason" : "AI is analyzing receipt...",
+                    style: TextStyle(fontStyle: FontStyle.italic, color: effectiveStatus == 'rejected' ? AppTheme.destructive : AppTheme.primary),
                   ),
                 ),
-                onTap: () async {
-                  DateTime? pickedDate = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2101),
-                  );
-                  if (pickedDate != null) {
-                    String formattedDate =
-                        "${pickedDate.year}-${pickedDate.month.toString().padLeft(2, '0')}-${pickedDate.day.toString().padLeft(2, '0')}";
-                    setModalState(() {
-                      dateController.text = formattedDate;
-                    });
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: locationController,
-                decoration: const InputDecoration(
-                  labelText: 'City / Location (e.g., London, Kochi)',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: justificationController,
-                decoration: const InputDecoration(labelText: 'Justification'),
-              ),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  "AI Pre-Audit Result: ${aiStatus.toUpperCase()}\n$aiReason",
-                  style: TextStyle(
-                    fontStyle: FontStyle.italic,
-                    color: aiStatus == 'rejected' ? AppTheme.destructive : AppTheme.primary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isUploading
-                      ? null
-                      : () {
-                          final amt = double.tryParse(amountController.text) ?? 0.0;
-                          if (initDate != 'N/A' &&
-                              dateController.text.isNotEmpty &&
-                              dateController.text != initDate) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  "⚠️ Date Mismatch: The date you entered differs from the receipt. Use the AI-extracted date.",
-                                ),
-                                backgroundColor: Colors.red,
-                              ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    // FIX: Disable the button while aiCompleted is false
+                    onPressed: !aiCompleted
+                        ? null
+                        : () {
+                            final amt = double.tryParse(amountController.text) ?? 0.0;
+                            _finalizeDatabaseInsert(
+                              merchantController.text,
+                              amt,
+                              dateController.text,
+                              locationController.text,
+                              justificationController.text,
+                              effectiveStatus,
+                              effectiveReason,
+                              effectiveSnippet,
+                              effectiveImageUrl,
                             );
-                            return;
-                          }
-                          _finalizeDatabaseInsert(
-                             merchantController.text, amt, dateController.text, 
-                             locationController.text, justificationController.text, 
-                             aiStatus, aiReason, aiSnippet, imageUrl
-                          );
-                        },
-                  child: _isUploading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: AppTheme.primaryForeground,
-                            strokeWidth: 2,
+                          },
+                    child: aiCompleted
+                        ? const Text("Confirm & Submit")
+                        : const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                              SizedBox(width: 12),
+                              Text("AI Analyzing Receipt..."),
+                            ],
                           ),
-                        )
-                      : const Text("Confirm & Submit"),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
+                const SizedBox(height: 32),
+              ],
+            ),
+          );
+        },
       ),
     );
 
     if (result == null && mounted) {
-       debugPrint("User dismissed form. Rolling back orphaned image '$uploadedFileName' from storage...");
-       await Supabase.instance.client.storage.from('receipts').remove([uploadedFileName]);
+      if (uploadedFileName != null && !_isUploading) {
+        await Supabase.instance.client.storage.from('receipts').remove([uploadedFileName!]);
+      }
+      setState(() {
+        _pickedFile = null;
+        _isUploading = false;
+      });
     }
+  }
+
+  void _startAIAuditFlow() async {
+    await _pickReceipt();
+    if (_pickedFile == null) return;
+    _showAddExpenseForm('', 0.0, 'N/A', 'pending', 'AI analysis in progress...', 'N/A', '');
   }
 
   @override
@@ -377,15 +297,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         title: const Text("My Expenses Request"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout, color: AppTheme.mutedForeground),
+            icon: const Icon(Icons.logout),
             onPressed: () async {
               await Supabase.instance.client.auth.signOut();
-              if (mounted) {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (_) => const LoginPage()),
-                );
-              }
+              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
             },
           ),
         ],
@@ -393,124 +308,37 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _claimsStream,
         builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.wifi_off,
-                    size: 48,
-                    color: AppTheme.mutedForeground,
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    "Connection lost. Reconnecting...",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.foreground,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No expenses yet.", style: TextStyle(color: AppTheme.mutedForeground)));
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(
-              child: Text(
-                "No expenses submitted yet.",
-                style: TextStyle(color: AppTheme.mutedForeground),
-              ),
-            );
-          }
-
-          // FIX: Eradicate Primitive Obsession by mapping to Data Models
-          final rawClaims = snapshot.data!;
-          final claims = rawClaims.map((json) => ExpenseClaim.fromJson(json)).toList();
-
+          final claims = snapshot.data!.map((json) => ExpenseClaim.fromJson(json)).toList();
           return ListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: claims.length,
             itemBuilder: (context, i) {
               final claim = claims[i];
               final status = claim.status.toLowerCase();
-              Color statusColor = status == 'approved'
-                  ? AppTheme.success
-                  : (status == 'rejected'
-                        ? AppTheme.destructive
-                        : AppTheme.warning);
+              Color sColor = status == 'approved' ? AppTheme.success : (status == 'rejected' ? AppTheme.destructive : AppTheme.warning);
 
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ExpansionTile(
-                  collapsedIconColor: AppTheme.mutedForeground,
-                  iconColor: AppTheme.primary,
-                  leading: CircleAvatar(
-                    backgroundColor: statusColor.withValues(alpha: 0.1),
-                    child: Icon(Icons.receipt_outlined, color: statusColor),
-                  ),
-                  title: Text(
-                    claim.merchantName, // Now strictly typed!
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.foreground,
-                    ),
-                  ),
-                  subtitle: Text(
-                    "USD ${claim.amount.toStringAsFixed(2)}", 
-                    style: const TextStyle(color: AppTheme.mutedForeground),
-                  ),
+                  leading: CircleAvatar(backgroundColor: sColor.withOpacity(0.1), child: Icon(Icons.receipt_outlined, color: sColor)),
+                  title: Text(claim.merchantName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text("${claim.currency} ${claim.amount.toStringAsFixed(2)}"),
                   trailing: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: statusColor.withValues(alpha: 0.2)),
-                    ),
-                    child: Text(
-                      status.toUpperCase(),
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: sColor.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: sColor.withOpacity(0.2))),
+                    child: Text(status.toUpperCase(), style: TextStyle(color: sColor, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                   children: [
-                    Container(
+                    Padding(
                       padding: const EdgeInsets.all(16),
-                      decoration: const BoxDecoration(
-                        color: AppTheme.secondary,
-                        borderRadius: BorderRadius.vertical(
-                          bottom: Radius.circular(10),
-                        ),
-                      ),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.psychology_outlined,
-                            size: 20,
-                            color: AppTheme.mutedForeground,
-                          ),
+                          const Icon(Icons.psychology_outlined, size: 20, color: AppTheme.mutedForeground),
                           const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              "AI Note: ${claim.auditReason}",
-                              style: const TextStyle(
-                                fontStyle: FontStyle.italic,
-                                color: AppTheme.mutedForeground,
-                              ),
-                            ),
-                          ),
+                          Expanded(child: Text("AI Note: ${claim.auditReason}", style: const TextStyle(fontStyle: FontStyle.italic, color: AppTheme.mutedForeground))),
                         ],
                       ),
                     ),
@@ -521,15 +349,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           );
         },
       ),
-      floatingActionButton: _isUploading ? const FloatingActionButton.extended(
-        onPressed: null,
-        backgroundColor: AppTheme.border,
-        label: Text("Analyzing..."),
-        icon: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-      ) : FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: _startAIAuditFlow,
         backgroundColor: AppTheme.primary,
-        foregroundColor: AppTheme.primaryForeground,
         icon: const Icon(Icons.add),
         label: const Text("New Claim"),
       ),

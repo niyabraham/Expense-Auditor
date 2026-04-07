@@ -70,7 +70,23 @@ serve(async (req) => {
     });
   
     const rawData = await groqResponse.json();
-    const content = rawData.choices[0].message.content;
+
+    if (!groqResponse.ok) {
+      console.error("Groq HTTP Error:", groqResponse.status, rawData);
+      throw new Error(rawData?.error?.message || `Groq request failed with status ${groqResponse.status}`);
+    }
+
+    // ERROR CHECK: If Groq returns an error, catch it here instead of crashing
+    if (!rawData.choices || rawData.choices.length === 0) {
+      console.error("Groq API Error:", rawData);
+      throw new Error(rawData.error?.message || "AI Provider failed to respond");
+    }
+
+    const content = rawData?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || content.trim().length === 0) {
+      console.error("Groq malformed response:", rawData);
+      throw new Error("AI Provider returned malformed content");
+    }
     
     // Robust LLM parsing
     let cleanJson = content;
