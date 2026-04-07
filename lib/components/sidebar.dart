@@ -28,24 +28,51 @@ class Sidebar extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(24.0),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: AppTheme.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppTheme.primary,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primary.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                  child: const Icon(Icons.shield, color: AppTheme.primary, size: 24),
+                  child: const Icon(
+                    Icons.account_balance_wallet_outlined,
+                    color: AppTheme.primaryForeground, 
+                    size: 26,
+                  ),
                 ),
-                const SizedBox(width: 12),
-                const Text(
-                  "Aetheris",
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.foreground,
-                    letterSpacing: 0.5,
-                  ),
+                const SizedBox(width: 14),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "AETHERIS",
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2.0,
+                        color: AppTheme.foreground,
+                      ),
+                    ),
+                    Text(
+                      "ENTERPRISE AUDIT",
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.5,
+                        color: AppTheme.mutedForeground,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
