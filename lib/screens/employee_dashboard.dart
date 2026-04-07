@@ -96,7 +96,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
   Future<void> _pickReceipt() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
       allowMultiple: false,
     );
     if (result != null) setState(() => _pickedFile = result.files.first);
