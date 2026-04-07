@@ -26,9 +26,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
     // FIX: Added .limit(50) to prevent unbounded data fetching
     _claimsStream = Supabase.instance.client
-        .from('claims')
+        .from('expense_claims')
         .stream(primaryKey: ['id'])
-        .eq('employee_id', userId)
+        .eq('user_id', userId)
         .order('created_at', ascending: false)
         .limit(50); 
 
@@ -37,7 +37,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         .onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
-          table: 'claims',
+          table: 'expense_claims',
           callback: (payload) {
             final newRecord = payload.newRecord;
             final oldRecord = payload.oldRecord;
@@ -186,8 +186,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     setState(() => _isUploading = true);
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
-      await Supabase.instance.client.from('claims').insert({
-        'employee_id': userId,
+      await Supabase.instance.client.from('expense_claims').insert({
+        'user_id': userId,
         'merchant_name': merchant,
         'amount': amount,
         'expense_date': date,

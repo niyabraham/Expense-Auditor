@@ -20,8 +20,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
   late final SupabaseStreamBuilder _allClaimsStream;
   late final RealtimeChannel _notificationChannel;
   Map<String, dynamic>? _dashboardStats;
-  int _selectedIndex =
-      0; // 0: Dashboard, 1: Alerts, 2: Expenses, 3: Analytics...
+  int _selectedIndex = 0; 
 
   @override
   void initState() {
@@ -29,17 +28,17 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     _refreshChartDataViaRPC();
 
     _allClaimsStream = Supabase.instance.client
-        .from('claims')
+        .from('expense_claims')
         .stream(primaryKey: ['id'])
         .order('created_at', ascending: false)
-        .limit(50); // Kept for the audit queue only
+        .limit(50);
 
     _notificationChannel = Supabase.instance.client
         .channel('public:claims_auditor')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: 'claims',
+          table: 'expense_claims',
           callback: (payload) {
              _refreshChartDataViaRPC();
           },
@@ -75,19 +74,16 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.background,
       body: Row(
         children: [
-          // Next.js style Sidebar
           Sidebar(
             selectedIndex: _selectedIndex,
             onItemSelected: (idx) => setState(() => _selectedIndex = idx),
           ),
-
-          // Main Content Area
           Expanded(
             child: Column(
               children: [
-                // Next.js style Header
                 DashboardHeader(
                   onLogout: _handleLogout,
                   title: [
@@ -99,8 +95,6 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                     "Corporate Policies",
                   ][_selectedIndex],
                 ),
-
-                // Content Body
                 Expanded(
                   child: StreamBuilder<List<Map<String, dynamic>>>(
                     stream: _allClaimsStream,
@@ -108,9 +102,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                       if (!snapshot.hasData) {
                         return const Center(child: CircularProgressIndicator());
                       }
-
-                  final rawData = snapshot.data!;
-                      final List<ExpenseClaim> claims = rawData
+                      final List<ExpenseClaim> claims = snapshot.data!
                           .map((json) => ExpenseClaim.fromJson(json))
                           .toList();
                       return _buildActiveScreen(claims);
@@ -160,13 +152,7 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
           ),
         );
       case 3:
-        if (_dashboardStats == null) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final approvedCount = _dashboardStats!['approved_count'] ?? 0;
-        final flaggedCount = _dashboardStats!['flagged_count'] ?? 0;
-        final rejectedCount = _dashboardStats!['rejected_count'] ?? 0;
-        
+        if (_dashboardStats == null) return const Center(child: CircularProgressIndicator());
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: LayoutBuilder(
@@ -176,21 +162,77 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
                 direction: isWide ? Axis.horizontal : Axis.vertical,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: isWide ? 2 : 0,
-                    child: _buildDynamicExpenseChart(claims),
-                  ),
-                  if (isWide) const SizedBox(width: 24),
-                  if (!isWide) const SizedBox(height: 24),
+                  Expanded(flex: isWide ? 2 : 0, child: _buildDynamicExpenseChart(claims)),
+                  if (isWide) const SizedBox(width: 24) else const SizedBox(height: 24),
                   Expanded(
                     flex: isWide ? 1 : 0,
                     child: _buildCategoryBreakdownCard(
-                      approvedCount, flaggedCount, rejectedCount, claims.isEmpty,
+                      _dashboardStats!['approved_count'] ?? 0, 
+                      _dashboardStats!['flagged_count'] ?? 0, 
+                      _dashboardStats!['rejected_count'] ?? 0, 
+                      claims.isEmpty,
                     ),
                   ),
                 ],
               );
             },
+          ),
+        );
+      case 4:
+        // --- UPDATED: EMPLOYEE DIRECTORY SECTION ---
+        final Map<String, List<ExpenseClaim>> employeeMap = {};
+        for (var claim in claims) {
+          // Using userId from updated model
+          employeeMap.putIfAbsent(claim.userId, () => []).add(claim);
+        }
+        final employeeIds = employeeMap.keys.toList();
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Active Corporate Employees",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.foreground),
+                  ),
+                  const SizedBox(height: 24),
+                  if (employeeIds.isEmpty)
+                    const Center(child: Text("No employees found."))
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: employeeIds.length,
+                      itemBuilder: (context, index) {
+                        final id = employeeIds[index];
+                        final empClaims = employeeMap[id]!;
+                        
+                        String name = "External Contractor";
+                        if (id == 'e60a3f01-4473-4560-b6e8-fea7342bf6b5') name = "David Miller";
+                        if (id == '313a1373-f6f7-44ac-bf51-2ddf537f7974') name = "Sarah Chen";
+                        if (id == 'f41188bc-eae0-43a5-a455-1c4eab4f5301') name = "Marcus Johnson";
+
+                        return Container(
+                          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
+                              child: const Icon(Icons.person, color: AppTheme.primary),
+                            ),
+                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.foreground)),
+                            subtitle: Text("ID: ${id.substring(0, 8)}... • ${empClaims.length} Claims submitted"),
+                            trailing: const Icon(Icons.chevron_right, color: AppTheme.mutedForeground),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
           ),
         );
       case 5:
@@ -210,23 +252,14 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
             ),
           ),
         );
-      case 4:
       default:
-        return const Center(
-          child: Text(
-            "Screen under construction.",
-            style: TextStyle(color: AppTheme.mutedForeground, fontSize: 16),
-          ),
-        );
+        return const Center(child: Text("Screen not found."));
     }
   }
 
   Widget _buildDashboardContent(List<ExpenseClaim> claims) {
-    if (_dashboardStats == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (_dashboardStats == null) return const Center(child: CircularProgressIndicator());
 
-    // Dynamic Stats Calculation from RPC
     final approvedCount = _dashboardStats!['approved_count'] ?? 0;
     final flaggedCount = _dashboardStats!['flagged_count'] ?? 0;
     final rejectedCount = _dashboardStats!['rejected_count'] ?? 0;
@@ -237,112 +270,35 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 4 Stats Cards Grid
           LayoutBuilder(
             builder: (context, constraints) {
-              int columns = constraints.maxWidth > 1000
-                  ? 4
-                  : (constraints.maxWidth > 600 ? 2 : 1);
-              double aspectRatio = constraints.maxWidth > 1200 ? 2.5 : (constraints.maxWidth > 1000 ? 2.0 : (constraints.maxWidth > 600 ? 2.5 : 2.0));
+              int columns = constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1);
               return GridView.count(
                 crossAxisCount: columns,
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                childAspectRatio: aspectRatio,
+                childAspectRatio: 2.5,
                 children: [
-                  StatsCard(
-                    title: "Total Approved Spend",
-                    value: "\$${totalApprovedSpend.toStringAsFixed(0)}",
-                    icon: Icons.attach_money,
-                    change: 8.2,
-                    changeLabel: "this month",
-                  ),
-                  StatsCard(
-                    title: "Claims Approved",
-                    value: "$approvedCount",
-                    icon: Icons.receipt_long,
-                    change: 12,
-                    changeLabel: "this month",
-                    iconColor: AppTheme.success,
-                  ),
-                  StatsCard(
-                    title: "Flagged by AI",
-                    value: "$flaggedCount",
-                    icon: Icons.warning_amber_rounded,
-                    change: -15,
-                    changeLabel: "vs last month",
-                    positiveTrend: false,
-                    iconColor: AppTheme.warning,
-                  ),
-                  StatsCard(
-                    title: "Rejected Claims",
-                    value: "$rejectedCount",
-                    icon: Icons.trending_down,
-                    change: -25,
-                    changeLabel: "from last week",
-                    positiveTrend: false,
-                    iconColor: AppTheme.destructive,
-                  ),
+                  StatsCard(title: "Total Approved Spend", value: "\$${totalApprovedSpend.toStringAsFixed(0)}", icon: Icons.attach_money, change: 8.2),
+                  StatsCard(title: "Claims Approved", value: "$approvedCount", icon: Icons.receipt_long, iconColor: AppTheme.success),
+                  StatsCard(title: "Flagged by AI", value: "$flaggedCount", icon: Icons.warning_amber_rounded, iconColor: AppTheme.warning),
+                  StatsCard(title: "Rejected Claims", value: "$rejectedCount", icon: Icons.trending_down, iconColor: AppTheme.destructive),
                 ],
               );
             },
           ),
-
           const SizedBox(height: 24),
-
-          // Charts Row
-          LayoutBuilder(
-            builder: (context, constraints) {
-              bool isWide = constraints.maxWidth > 900;
-              return Flex(
-                direction: isWide ? Axis.horizontal : Axis.vertical,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: isWide ? 2 : 0,
-                    child: _buildDynamicExpenseChart(claims),
-                  ),
-                  if (isWide) const SizedBox(width: 24),
-                  if (!isWide) const SizedBox(height: 24),
-                  Expanded(
-                    flex: isWide ? 1 : 0,
-                    child: _buildCategoryBreakdownCard(
-                      approvedCount,
-                      flaggedCount,
-                      rejectedCount,
-                      claims.isEmpty,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-
+          _buildDynamicExpenseChart(claims),
           const SizedBox(height: 24),
-
-          // Recent Expenses Table Area
           Card(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Recent Expenses & Audit Queue",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.foreground,
-                        ),
-                      ),
-                      Icon(Icons.more_horiz, color: AppTheme.mutedForeground),
-                    ],
-                  ),
+                  const Text("Recent Audit Queue", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
                   const SizedBox(height: 16),
                   _buildQueueList(claims),
                 ],
@@ -354,16 +310,9 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
     );
   }
 
-  // --- UI HELPER: DYNAMIC BAR CHART ---
   Widget _buildDynamicExpenseChart(List<ExpenseClaim> claims) {
     Map<String, dynamic> rawMonthly = _dashboardStats?['monthly_spend'] ?? {};
-    
-    // 1. Initialize an empty map for all 12 months
-    Map<int, double> monthlySpend = {
-      1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 
-      7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0
-    };
-
+    Map<int, double> monthlySpend = {1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0, 10:0, 11:0, 12:0};
     double maxVal = 0.0;
     rawMonthly.forEach((k, v) {
        int month = int.tryParse(k) ?? 1;
@@ -371,267 +320,68 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
        monthlySpend[month] = val;
        if (val > maxVal) maxVal = val;
     });
-
-    double maxY = maxVal > 0 ? (maxVal * 1.2) : 20000;
-
-    List<BarChartGroupData> barGroups = [];
-    for (int i = 1; i <= 12; i++) {
-      barGroups.add(
-        BarChartGroupData(
-          x: i,
-          barRods: [
-            BarChartRodData(
-              toY: monthlySpend[i]!,
-              color: AppTheme.primary,
-              width: 22,
-              borderRadius: BorderRadius.circular(4),
-              backDrawRodData: BackgroundBarChartRodData(
-                show: true,
-                toY: maxY,
-                color: AppTheme.border.withValues(alpha: 0.5),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Spend Analytics",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.foreground,
-              ),
-            ),
+            const Text("Spend Analytics", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
             const SizedBox(height: 24),
             SizedBox(
               height: 250,
               child: BarChart(
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
-                  maxY: maxY, // Dynamic Maximum Bounds
-                  barTouchData: const BarTouchData(enabled: false),
-                  borderData: FlBorderData(show: false),
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (value) => const FlLine(color: AppTheme.border, strokeWidth: 1),
-                  ),
-                  titlesData: FlTitlesData(
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 40,
-                        getTitlesWidget: (value, meta) {
-                          if (value == 0) return const Text("");
-                          return Text(
-                            "\$${(value / 1000).toInt()}k",
-                            style: const TextStyle(
-                              color: AppTheme.mutedForeground,
-                              fontSize: 12,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) {
-                          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                          if (value.toInt() < 1 || value.toInt() > 12) return const Text("");
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              months[value.toInt() - 1],
-                              style: const TextStyle(color: AppTheme.mutedForeground, fontSize: 12),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                  barGroups: barGroups,
-                ),
-              ),
+                  maxY: maxVal > 0 ? maxVal * 1.2 : 20000,
+                  barGroups: List.generate(12, (i) => BarChartGroupData(x: i + 1, barRods: [BarChartRodData(toY: monthlySpend[i+1]!, color: AppTheme.primary, width: 22)]))
+                )
+              )
             ),
           ],
         ),
-      ),
+      )
     );
   }
 
-  Widget _buildCategoryBreakdownCard(
-    int approved,
-    int flagged,
-    int rejected,
-    bool isEmpty,
-  ) {
+  Widget _buildCategoryBreakdownCard(int approved, int flagged, int rejected, bool isEmpty) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Audit Breakdown",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.foreground,
-              ),
-            ),
+            const Text("Audit Breakdown", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
             const SizedBox(height: 24),
             SizedBox(
               height: 250,
-              child: isEmpty
-                  ? const Center(child: Text("No data yet"))
-                  : PieChart(
-                      PieChartData(
-                        sectionsSpace: 2,
-                        centerSpaceRadius: 50,
-                        sections: [
-                          PieChartSectionData(
-                            color: AppTheme.success,
-                            value: approved.toDouble(),
-                            title: 'Approved\n($approved)',
-                            radius: 50,
-                            titleStyle: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          PieChartSectionData(
-                            color: AppTheme.warning,
-                            value: flagged.toDouble(),
-                            title: 'Flagged\n($flagged)',
-                            radius: 50,
-                            titleStyle: const TextStyle(
-                              color: Colors.black,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          PieChartSectionData(
-                            color: AppTheme.destructive,
-                            value: rejected.toDouble(),
-                            title: 'Rejected\n($rejected)',
-                            radius: 50,
-                            titleStyle: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+              child: isEmpty ? const Center(child: Text("No data yet")) : PieChart(
+                PieChartData(sections: [
+                  PieChartSectionData(color: AppTheme.success, value: approved.toDouble(), title: 'Approved', radius: 50),
+                  PieChartSectionData(color: AppTheme.warning, value: flagged.toDouble(), title: 'Flagged', radius: 50),
+                  PieChartSectionData(color: AppTheme.destructive, value: rejected.toDouble(), title: 'Rejected', radius: 50),
+                ])
+              )
             ),
           ],
-        ),
-      ),
+        )
+      )
     );
   }
 
   Widget _buildQueueList(List<ExpenseClaim> claims) {
-    List<ExpenseClaim> sorted = List.from(claims);
-    sorted.sort((a, b) {
-      int p(String s) => s == 'rejected' ? 0 : (s == 'flagged' ? 1 : 2);
-      return p(a.status).compareTo(p(b.status));
-    });
-
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: sorted.length,
+      itemCount: claims.length,
       itemBuilder: (context, index) {
-        final claim = sorted[index];
-        final status = claim.status;
-        Color sColor = status == 'approved'
-            ? AppTheme.success
-            : (status == 'rejected' ? AppTheme.destructive : AppTheme.warning);
-
-        return Container(
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppTheme.border)),
-          ),
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(
-              backgroundColor: sColor.withValues(alpha: 0.1),
-              child: Icon(Icons.receipt_outlined, color: sColor, size: 20),
-            ),
-            title: Text(
-              claim.merchantName,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: AppTheme.foreground,
-              ),
-            ),
-            subtitle: Text(
-              "ID: ${claim.id.substring(0, 8)} • Date: ${claim.date}",
-              style: const TextStyle(
-                color: AppTheme.mutedForeground,
-                fontSize: 12,
-              ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  "${claim.currency} ${claim.amount.toStringAsFixed(2)}",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.foreground,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Container(
-                  width: 80,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: sColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: sColor.withValues(alpha: 0.2)),
-                  ),
-                  child: Text(
-                    status.toUpperCase(),
-                    style: TextStyle(
-                      color: sColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                OutlinedButton(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AuditDetailView(claim: claim),
-                    ),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-                  child: const Text("Review"),
-                ),
-              ],
-            ),
+        final claim = claims[index];
+        return ListTile(
+          title: Text(claim.merchantName, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.foreground)),
+          subtitle: Text("Date: ${claim.date}", style: const TextStyle(color: AppTheme.mutedForeground)),
+          trailing: OutlinedButton(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AuditDetailView(claim: claim))),
+            child: const Text("Review"),
           ),
         );
       },
@@ -641,12 +391,11 @@ class _AuditorDashboardState extends State<AuditorDashboard> {
 
 class AuditDetailView extends StatelessWidget {
   final ExpenseClaim claim;
-
   const AuditDetailView({super.key, required this.claim});
 
   Future<void> _updateStatus(BuildContext context, String newStatus) async {
     await Supabase.instance.client
-        .from('claims')
+        .from('expense_claims')
         .update({'status': newStatus})
         .eq('id', claim.id);
     if (context.mounted) Navigator.pop(context);
@@ -654,262 +403,31 @@ class AuditDetailView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = claim.status;
-    final sColor = status == 'approved'
-        ? AppTheme.success
-        : (status == 'rejected' ? AppTheme.destructive : AppTheme.warning);
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Auditor Review Case"),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      appBar: AppBar(title: const Text("Auditor Review")),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (claim.imageUrl != null) 
+              Center(child: Container(constraints: const BoxConstraints(maxHeight: 400), child: Image.network(claim.imageUrl!))),
+            const SizedBox(height: 24),
+            Text("Merchant: ${claim.merchantName}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.foreground)),
+            const Divider(),
+            Text("Amount: \$${claim.amount.toStringAsFixed(2)}", style: const TextStyle(fontSize: 18, color: AppTheme.foreground)),
+            const SizedBox(height: 12),
+            Text("AI Audit Note: ${claim.auditReason}", style: const TextStyle(fontStyle: FontStyle.italic, color: AppTheme.mutedForeground)),
+            const SizedBox(height: 48),
+            Row(
+              children: [
+                Expanded(child: ElevatedButton(onPressed: () => _updateStatus(context, 'approved'), style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success), child: const Text("Approve"))),
+                const SizedBox(width: 16),
+                Expanded(child: ElevatedButton(onPressed: () => _updateStatus(context, 'rejected'), style: ElevatedButton.styleFrom(backgroundColor: AppTheme.destructive), child: const Text("Reject"))),
+              ],
+            )
+          ],
         ),
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth > 800) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 1, child: _buildReceiptViewer()),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  flex: 1,
-                  child: _buildExtractedDataAndPolicy(context, sColor),
-                ),
-              ],
-            );
-          } else {
-            return SingleChildScrollView(
-              child: Column(
-                children: [
-                  SizedBox(height: 400, child: _buildReceiptViewer()),
-                  _buildExtractedDataAndPolicy(context, sColor),
-                ],
-              ),
-            );
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _buildReceiptViewer() {
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: claim.imageUrl != null
-            ? InteractiveViewer(
-                panEnabled: true,
-                minScale: 0.5,
-                maxScale: 4,
-                child: Image.network(claim.imageUrl!, fit: BoxFit.contain),
-              )
-            : const Icon(Icons.receipt_long, size: 100, color: AppTheme.border),
-      ),
-    );
-  }
-
-  Widget _buildExtractedDataAndPolicy(BuildContext context, Color statusColor) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(32.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Extracted OCR Data",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.foreground,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-              side: const BorderSide(color: AppTheme.border),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  _infoRow("Merchant", claim.merchantName),
-                  const Divider(),
-                  _infoRow(
-                    "Amount",
-                    "${claim.currency} ${claim.amount.toStringAsFixed(2)}",
-                  ),
-                  const Divider(),
-                  _infoRow("Date Claimed", claim.date),
-                  const Divider(),
-                  _infoRow("Location", claim.location ?? 'Not Specified'),
-                  const Divider(),
-                  _infoRow("Justification", claim.justification ?? 'N/A'),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 32),
-
-          const Text(
-            "AI Policy Verification",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.foreground,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      statusColor == AppTheme.success
-                          ? Icons.check_circle
-                          : (statusColor == AppTheme.destructive
-                                ? Icons.cancel
-                                : Icons.warning),
-                      color: statusColor,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      "STATUS: ${claim.status.toUpperCase()}",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: statusColor,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  claim.auditReason,
-                  style: const TextStyle(
-                    fontStyle: FontStyle.italic,
-                    color: AppTheme.foreground,
-                    fontSize: 15,
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-                const Text(
-                  "VERBATIM POLICY SNIPPET:",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 11,
-                    color: AppTheme.mutedForeground,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppTheme.background,
-                    border: Border.all(color: AppTheme.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '"${claim.policySnippet ?? 'N/A'}"',
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 13,
-                      color: AppTheme.mutedForeground,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 40),
-
-          const Text(
-            "Auditor Actions",
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: AppTheme.foreground,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const TextField(
-            decoration: InputDecoration(
-              hintText: "Add custom note to employee (optional)...",
-            ),
-            maxLines: 2,
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.success,
-                    foregroundColor: Colors.black,
-                  ),
-                  onPressed: () => _updateStatus(context, 'approved'),
-                  child: const Text("Approve Exception"),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.destructive,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => _updateStatus(context, 'rejected'),
-                  child: const Text("Reject Claim"),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: AppTheme.mutedForeground,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: AppTheme.foreground,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

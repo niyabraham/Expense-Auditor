@@ -1,7 +1,6 @@
-// lib/models/expense_claim.dart
-
 class ExpenseClaim {
   final String id;
+  final String userId; // Added this field
   final String merchantName;
   final double amount;
   final String date;
@@ -15,6 +14,7 @@ class ExpenseClaim {
 
   ExpenseClaim({
     required this.id,
+    required this.userId, // Added this
     required this.merchantName,
     required this.amount,
     required this.date,
@@ -27,10 +27,10 @@ class ExpenseClaim {
     this.policySnippet,
   });
 
-  /// Factory constructor to safely parse JSON from Supabase.
   factory ExpenseClaim.fromJson(Map<String, dynamic> json) {
     return ExpenseClaim(
       id: json['id'].toString(),
+      userId: json['user_id']?.toString() ?? 'unknown', // Added this mapping
       merchantName: json['merchant_name'] ?? 'Unknown Merchant',
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       date: json['expense_date'] ?? 'N/A',
@@ -42,22 +42,5 @@ class ExpenseClaim {
       imageUrl: json['image_url'],
       policySnippet: json['policy_snippet'],
     );
-  }
-
-  /// Convert back to a Map if needed (e.g., for updates)
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'merchant_name': merchantName,
-      'amount': amount,
-      'expense_date': date,
-      'status': status,
-      'audit_reason': auditReason,
-      'currency': currency,
-      'location': location,
-      'justification': justification,
-      'image_url': imageUrl,
-      'policy_snippet': policySnippet,
-    };
   }
 }

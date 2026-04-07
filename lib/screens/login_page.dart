@@ -16,41 +16,24 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
 
-  Future<void> _handleLogin() async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Enter email and password")));
-      return;
-    }
-
+  Future<void> _signIn() async {
     setState(() => _isLoading = true);
-
     try {
-      final AuthResponse res = await Supabase.instance.client.auth
-          .signInWithPassword(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-          );
-
-      final user = res.user;
-      if (user != null) {
-        final profileData = await Supabase.instance.client
-            .from('profiles')
-            .select('role')
-            .eq('id', user.id)
-            .single();
-
-        final String role = profileData['role'];
-
-        if (mounted) {
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      
+      if (mounted && response.user != null) {
+        if (_emailController.text.trim().toLowerCase() == 'admin@aetheris.com') {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(
-              builder: (context) => role == 'admin'
-                  ? const AuditorDashboard()
-                  : const EmployeeDashboard(),
-            ),
+            MaterialPageRoute(builder: (context) => const AuditorDashboard()),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const EmployeeDashboard()),
           );
         }
       }
@@ -58,114 +41,217 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Login Error: $e"),
-            backgroundColor: AppTheme.destructive,
-            duration: const Duration(seconds: 5),
+            content: Text("Authentication Failed: ${e.toString().split('] ').last}"),
+            backgroundColor: Colors.redAccent,
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final isDesktop = size.width > 800;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
-      body: Center(
-        child: Container(
-          width: 400,
-          padding: const EdgeInsets.all(32),
-          decoration: BoxDecoration(
-            color: AppTheme.card,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppTheme.border),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 20),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
+      body: Row(
+        children: [
+          // Left Side - Clean Branding
+          if (isDesktop)
+            Expanded(
+              flex: 5,
+              child: Container(
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.shield,
-                  size: 64,
-                  color: AppTheme.primary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "Aetheris Auditor",
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.foreground,
-                ),
-              ),
-              const Text(
-                "Secure Corporate Single Sign-On",
-                style: TextStyle(color: AppTheme.mutedForeground),
-              ),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: "Corporate Email",
-                  prefixIcon: Icon(
-                    Icons.email_outlined,
-                    color: AppTheme.mutedForeground,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppTheme.primary.withValues(alpha: 0.95),
+                      AppTheme.primary.withValues(alpha: 0.75),
+                    ],
                   ),
                 ),
-                keyboardType: TextInputType.emailAddress,
-                style: const TextStyle(color: AppTheme.foreground),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: "Password",
-                  prefixIcon: Icon(
-                    Icons.lock_outline,
-                    color: AppTheme.mutedForeground,
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.account_balance_wallet_outlined,
+                        color: Colors.white,
+                        size: 96,
+                      ),
+                      SizedBox(height: 32),
+                      Text(
+                        "AETHERIS",
+                        style: TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 6.0,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        "ENTERPRISE AUDIT",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 4.0,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                style: const TextStyle(color: AppTheme.foreground),
               ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _handleLogin,
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: AppTheme.primaryForeground,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text(
-                          "Secure Login",
+            ),
+
+          // Right Side - Login Form
+          Expanded(
+            flex: 4,
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(48.0),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!isDesktop) ...[
+                        const Icon(
+                          Icons.account_balance_wallet_outlined,
+                          color: AppTheme.primary,
+                          size: 64,
+                        ),
+                        const SizedBox(height: 24),
+                        const Text(
+                          "AETHERIS",
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontSize: 32,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.0,
+                            color: AppTheme.foreground,
                           ),
                         ),
+                        const SizedBox(height: 48),
+                      ],
+
+                      const Text(
+                        "Welcome Back",
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.foreground,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        "Sign in to your corporate account",
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: AppTheme.mutedForeground,
+                        ),
+                      ),
+                      const SizedBox(height: 48),
+
+                      // Email Field
+                      TextFormField(
+                        controller: _emailController,
+                        style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: "Corporate Email",
+                          hintStyle: const TextStyle(color: Colors.black54),
+                          prefixIcon: const Icon(Icons.email_outlined, color: Colors.black54),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Password Field
+                      TextFormField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: "Password",
+                          hintStyle: const TextStyle(color: Colors.black54),
+                          prefixIcon: const Icon(Icons.lock_outline, color: Colors.black54),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+
+                      // Login Button
+                      SizedBox(
+                        height: 54,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _signIn,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primary,
+                            foregroundColor: AppTheme.primaryForeground,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 24,
+                                  width: 24,
+                                  child: CircularProgressIndicator(
+                                    color: AppTheme.primaryForeground,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  "Sign In",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
