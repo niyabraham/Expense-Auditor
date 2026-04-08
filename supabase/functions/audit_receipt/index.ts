@@ -7,6 +7,42 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+function jsonResponse(status: number, body: Record<string, unknown>) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function sniffImageMime(bytes: Uint8Array): string | null {
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) return "image/png";
+
+  // JPEG: FF D8 FF
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  // WEBP: "RIFF"...."WEBP"
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return "image/webp";
+
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -14,11 +50,35 @@ serve(async (req) => {
 
   try {
     const { imageUrl, location, date: employeeClaimedDate } = await req.json();
+    if (typeof imageUrl !== 'string' || imageUrl.trim().length === 0) {
+      return jsonResponse(400, { error: "Missing required field: imageUrl" });
+    }
     
     // Server-side fetching to prevent OOM
     console.log("Fetching image from URL: ", imageUrl);
     const imageRes = await fetch(imageUrl);
+    if (!imageRes.ok) {
+      const contentType = imageRes.headers.get("content-type") ?? "unknown";
+      return jsonResponse(400, {
+        error: `Failed to fetch receipt from imageUrl (HTTP ${imageRes.status})`,
+        details: { contentType },
+      });
+    }
+
     const arrayBuffer = await imageRes.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+
+    const headerMime = (imageRes.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    const sniffedMime = sniffImageMime(bytes);
+    const mime = (headerMime.startsWith("image/") ? headerMime : sniffedMime);
+
+    if (!mime || !mime.startsWith("image/")) {
+      return jsonResponse(400, {
+        error: "Unsupported receipt format. Please upload a JPG/PNG/WebP image (PDFs are not supported for AI audit).",
+        details: { contentType: headerMime || "unknown" },
+      });
+    }
+
     const base64Image = encodeBase64(arrayBuffer);
 
     // SECURE: This key is safely hidden on Supabase servers!
@@ -63,8 +123,8 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "llama-3.2-90b-vision-preview",
-        messages: [{ role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } } ] }],
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [{ role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:${mime};base64,${base64Image}` } } ] }],
         response_format: { type: "json_object" }
       })
     });
@@ -98,6 +158,7 @@ serve(async (req) => {
     const parsedData = JSON.parse(cleanJson);
     return new Response(JSON.stringify(parsedData), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
-    return new Response(String(err), { status: 500, headers: corsHeaders })
+    const message = err instanceof Error ? err.message : String(err);
+    return jsonResponse(500, { error: message });
   }
 })

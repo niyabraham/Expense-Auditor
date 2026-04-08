@@ -1,6 +1,10 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:pdf_render/pdf_render.dart';
 
 import '../theme/app_theme.dart';
 import 'login_page.dart';
@@ -18,6 +22,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   RealtimeChannel? _notificationChannel;
   bool _isUploading = false;
   PlatformFile? _pickedFile;
+  bool _pickedFileIsPdf = false;
+  String? _pickedFileContentType;
 
   @override
   void initState() {
@@ -66,19 +72,82 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Future<void> _pickReceipt() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
       allowMultiple: false,
+      withData: true,
     );
-    if (result != null) setState(() => _pickedFile = result.files.first);
+    if (result != null) {
+      final file = result.files.first;
+      final ext = (file.extension ?? '').toLowerCase();
+      final nameLower = file.name.toLowerCase();
+      final bytes = file.bytes;
+
+      // Some platforms may report missing/incorrect extension/MIME; use magic bytes
+      // so scanned "image receipts" saved as PDFs are still detected reliably.
+      final bool isPdfByMagic =
+          bytes != null &&
+          bytes.length >= 4 &&
+          String.fromCharCodes(bytes.sublist(0, 4)) == '%PDF';
+
+      final bool isPdf = ext == 'pdf' || nameLower.endsWith('.pdf') || isPdfByMagic;
+
+      final imageContentType = switch (ext) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        _ => 'application/octet-stream',
+      };
+
+      final contentType = isPdf ? 'application/pdf' : imageContentType;
+      setState(() {
+        _pickedFile = file;
+        _pickedFileContentType = contentType;
+        _pickedFileIsPdf = isPdf;
+      });
+    }
   }
 
-  Future<({String fileName, String imageUrl})?> _uploadToSupabase() async {
-    if (_pickedFile == null || _pickedFile!.bytes == null) return null;
+  Future<Uint8List> _renderPdfFirstPageToPng(Uint8List pdfBytes) async {
+    final doc = await PdfDocument.openData(pdfBytes);
+    final page = await doc.getPage(1);
     try {
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${_pickedFile!.name}';
+      const scale = 2.0; // balance quality vs. upload size
+      final pageImage = await page.render(
+        width: (page.width * scale).toInt(),
+        height: (page.height * scale).toInt(),
+      );
+      try {
+        final image = await pageImage.createImageDetached();
+        try {
+          final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+          if (byteData == null) {
+            throw Exception("Failed to encode PDF page as PNG.");
+          }
+          return byteData.buffer.asUint8List();
+        } finally {
+          image.dispose();
+        }
+      } finally {
+        pageImage.dispose();
+      }
+    } finally {
+      await doc.dispose();
+    }
+  }
+
+  Future<({String fileName, String imageUrl})?> _uploadBytesToSupabase({
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    try {
       await Supabase.instance.client.storage
           .from('receipts')
-          .uploadBinary(fileName, _pickedFile!.bytes!);
+          .uploadBinary(
+            fileName,
+            bytes,
+            fileOptions: FileOptions(contentType: contentType),
+          );
       final imageUrl = Supabase.instance.client.storage
           .from('receipts')
           .getPublicUrl(fileName);
@@ -86,6 +155,34 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     } catch (e) {
       return null;
     }
+  }
+
+  Future<({String fileName, String imageUrl})?> _uploadPickedReceiptForAudit() async {
+    final picked = _pickedFile;
+    final pickedBytes = picked?.bytes;
+    if (picked == null || pickedBytes == null) return null;
+
+    final ts = DateTime.now().millisecondsSinceEpoch;
+
+    if (_pickedFileIsPdf) {
+      final pngBytes = await _renderPdfFirstPageToPng(pickedBytes);
+      final normalizedName = picked.name.toLowerCase().endsWith('.pdf')
+          ? picked.name.substring(0, picked.name.length - 4)
+          : picked.name;
+      final outName = '${ts}_${normalizedName}_page1.png';
+      return _uploadBytesToSupabase(
+        bytes: pngBytes,
+        fileName: outName,
+        contentType: 'image/png',
+      );
+    }
+
+    final outName = '${ts}_${picked.name}';
+    return _uploadBytesToSupabase(
+      bytes: pickedBytes,
+      fileName: outName,
+      contentType: _pickedFileContentType ?? 'application/octet-stream',
+    );
   }
 
   Future<void> _finalizeDatabaseInsert(
@@ -112,6 +209,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       if (!mounted) return;
       setState(() {
         _pickedFile = null;
+        _pickedFileIsPdf = false;
+        _pickedFileContentType = null;
         _isUploading = false;
       });
       Navigator.pop(context, true);
@@ -159,14 +258,31 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             aiStarted = true;
             Future.microtask(() async {
               try {
-                final upload = await _uploadToSupabase();
+                final upload = await _uploadPickedReceiptForAudit();
                 if (upload == null) throw Exception("Upload failed");
                 uploadedFileName = upload.fileName;
                 effectiveImageUrl = upload.imageUrl;
 
+                final currentUser = Supabase.instance.client.auth.currentUser;
+                if (currentUser == null) {
+                  throw Exception("You must be logged in to run AI audit.");
+                }
+
+                final refreshResult =
+                    await Supabase.instance.client.auth.refreshSession();
+                final accessToken = refreshResult.session?.accessToken ??
+                    Supabase.instance.client.auth.currentSession?.accessToken;
+                if (accessToken == null || accessToken.isEmpty) {
+                  throw Exception("Session expired. Please login again.");
+                }
+
                 final response = await Supabase.instance.client.functions.invoke(
                   'audit_receipt',
-                  body: {'imageUrl': effectiveImageUrl, 'location': 'Detecting...'},
+                  body: {
+                    'imageUrl': effectiveImageUrl,
+                    'location': locationController.text.isEmpty ? 'Detecting...' : locationController.text,
+                    'date': dateController.text, // Added for backend date mismatch check
+                  },
                 );
 
                 final data = response.data;
@@ -181,9 +297,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 });
               } catch (e) {
                 if (mounted) {
+                  String reason = "AI Analysis failed. Please enter manually.";
+                  if (e is FunctionException) {
+                    final detailsText = e.details.toString().trim();
+                    final reasonPhraseText = e.reasonPhrase.toString().trim();
+                    final message = detailsText.isNotEmpty
+                        ? detailsText
+                        : (reasonPhraseText.isNotEmpty ? reasonPhraseText : 'Unauthorized or server error');
+                    reason = "AI call failed (${e.status}): $message";
+                  } else if (e is Exception) {
+                    reason = e.toString().replaceFirst("Exception: ", "");
+                  }
                   setModalState(() {
                     effectiveStatus = 'flagged';
-                    effectiveReason = "AI Analysis failed. Please enter manually.";
+                    effectiveReason = reason;
                     aiCompleted = true;
                   });
                 }
@@ -219,7 +346,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                  decoration: BoxDecoration(color: AppTheme.primary.withAlpha((0.1 * 255).round()), borderRadius: BorderRadius.circular(8)),
                   child: Text(
                     aiCompleted ? "AI Result: ${effectiveStatus.toUpperCase()}\n$effectiveReason" : "AI is analyzing receipt...",
                     style: TextStyle(fontStyle: FontStyle.italic, color: effectiveStatus == 'rejected' ? AppTheme.destructive : AppTheme.primary),
@@ -229,7 +356,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    // FIX: Disable the button while aiCompleted is false
                     onPressed: !aiCompleted
                         ? null
                         : () {
@@ -279,6 +405,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       }
       setState(() {
         _pickedFile = null;
+        _pickedFileIsPdf = false;
+        _pickedFileContentType = null;
         _isUploading = false;
       });
     }
@@ -300,7 +428,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             icon: const Icon(Icons.logout),
             onPressed: () async {
               await Supabase.instance.client.auth.signOut();
-              if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+              if (!context.mounted) return;
+              Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
             },
           ),
         ],
@@ -323,12 +452,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ExpansionTile(
-                  leading: CircleAvatar(backgroundColor: sColor.withOpacity(0.1), child: Icon(Icons.receipt_outlined, color: sColor)),
+                  leading: CircleAvatar(backgroundColor: sColor.withAlpha((0.1 * 255).round()), child: Icon(Icons.receipt_outlined, color: sColor)),
                   title: Text(claim.merchantName, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text("${claim.currency} ${claim.amount.toStringAsFixed(2)}"),
                   trailing: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: sColor.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: sColor.withOpacity(0.2))),
+                    decoration: BoxDecoration(color: sColor.withAlpha((0.1 * 255).round()), borderRadius: BorderRadius.circular(12), border: Border.all(color: sColor.withAlpha((0.2 * 255).round()))),
                     child: Text(status.toUpperCase(), style: TextStyle(color: sColor, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                   children: [

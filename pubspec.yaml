@@ -16,6 +16,7 @@ dependencies:
   http: ^1.2.0
   file_picker: ^8.0.0
   fl_chart: ^1.2.0
+  pdf_render: ^1.4.12
 
 dev_dependencies:
   flutter_test:
