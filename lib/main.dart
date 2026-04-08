@@ -13,7 +13,6 @@ Future<void> main() async {
     print("Running without local .env file: $e");
   }
 
-  // Initialize Supabase using the loaded .env values
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL'] ?? '',
     anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
