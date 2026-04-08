@@ -5,13 +5,20 @@ import 'theme/app_theme.dart';
 import 'screens/login_page.dart';
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   try {
     await dotenv.load(fileName: "assets/.env");
   } catch (e) {
-    print("Running without local .env file");
-    // The app will now fallback to environment variables 
-    // or system defaults instead of crashing.
+    print("Running without local .env file: $e");
   }
+
+  // Initialize Supabase using the loaded .env values
+  await Supabase.initialize(
+    url: dotenv.env['SUPABASE_URL'] ?? '',
+    anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+  );
+
   runApp(const MyApp());
 }
 
