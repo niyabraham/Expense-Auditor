@@ -6,3 +6,4 @@ linux/
 macos/
 windows/
 .env
+build/web/assets/assets/.env

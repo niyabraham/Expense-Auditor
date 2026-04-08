@@ -4,15 +4,14 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_page.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: "assets/.env");
-
-  await Supabase.initialize(
-    url: dotenv.env['SUPABASE_URL']!,
-    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
-  );
-  
+Future<void> main() async {
+  try {
+    await dotenv.load(fileName: "assets/.env");
+  } catch (e) {
+    print("Running without local .env file");
+    // The app will now fallback to environment variables 
+    // or system defaults instead of crashing.
+  }
   runApp(const MyApp());
 }
 
