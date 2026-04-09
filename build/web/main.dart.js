@@ -47773,7 +47773,7 @@ return A.t(p.At(i),$async$B4)
 case 5:n=b
 m=k.b
 if(B.c.jp(m.toLowerCase(),".pdf"))m=B.c.W(m,0,m.length-4)
-q=p.vD(n,"image/png",""+o+"_"+m+"_page1.png")
+q=p.vD(n,"image/jpeg",""+o+"_"+m+"_page1.jpg")
 s=1
 break
 case 4:j=k.b

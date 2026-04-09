@@ -168,11 +168,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       final normalizedName = picked.name.toLowerCase().endsWith('.pdf')
           ? picked.name.substring(0, picked.name.length - 4)
           : picked.name;
-      final outName = '${ts}_${normalizedName}_page1.png';
+      final outName = '${ts}_${normalizedName}_page1.jpg';
       return _uploadBytesToSupabase(
         bytes: pngBytes,
         fileName: outName,
-        contentType: 'image/png',
+        contentType: 'image/jpeg',
       );
     }
 

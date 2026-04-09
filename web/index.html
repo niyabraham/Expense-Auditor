@@ -1,38 +1,78 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="expense_auditor">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>expense_auditor</title>
+  <title>Aetheris Expense Auditor</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <!-- Unregister stale service workers — fixes the 4000ms prepareServiceWorker warning -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (let reg of registrations) { reg.unregister(); }
+      });
+    }
+  </script>
+
+  <!-- PDF.js: renders PDF page 1 to a size-capped JPEG in the browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    /**
+     * Called from Flutter via dart:js_util interop.
+     * Renders page 1 of a PDF to a JPEG and returns it as a base64 string.
+     *
+     * Deliberately kept small (max 1200px on longest side, 0.85 JPEG quality)
+     * so the resulting file stays under ~200KB — safe for Supabase edge function
+     * memory limits and Groq's vision API.
+     *
+     * @param {string} pdfBase64 - PDF bytes encoded as base64.
+     * @returns {Promise<string>} JPEG bytes as base64 (no data URI prefix).
+     */
+    async function renderPdfPageToBase64Png(pdfBase64) {
+      const pdfjsLib = window['pdfjs-dist/build/pdf'];
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      // Decode base64 → Uint8Array
+      const binaryStr = atob(pdfBase64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+      const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      const page = await pdf.getPage(1);
+
+      // Scale so the longest side is at most 1200px — keeps file size small
+      const MAX_PX = 1200;
+      const naturalViewport = page.getViewport({ scale: 1.0 });
+      const longestSide = Math.max(naturalViewport.width, naturalViewport.height);
+      const scale = Math.min(1.5, MAX_PX / longestSide); // never upscale beyond 1.5x
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+
+      const ctx = canvas.getContext('2d');
+      // White background so JPEG has no transparency artefacts
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      // JPEG at 0.85 quality ≈ 5–10× smaller than PNG — critical for edge fn limits
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+    }
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
