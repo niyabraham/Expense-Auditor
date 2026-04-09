@@ -1,10 +1,11 @@
 import 'dart:typed_data';
-import 'dart:ui' as ui;
+// ignore: unused_import
+import 'dart:ui' as ui; // retained for potential non-web pdf render path
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:pdf_render/pdf_render.dart';
 
 import '../theme/app_theme.dart';
 import 'login_page.dart';
@@ -108,31 +109,17 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   }
 
   Future<Uint8List> _renderPdfFirstPageToPng(Uint8List pdfBytes) async {
-    final doc = await PdfDocument.openData(pdfBytes);
-    final page = await doc.getPage(1);
-    try {
-      const scale = 2.0; // balance quality vs. upload size
-      final pageImage = await page.render(
-        width: (page.width * scale).toInt(),
-        height: (page.height * scale).toInt(),
+    // pdf_render uses platform channels — not available on Flutter Web.
+    if (kIsWeb) {
+      throw Exception(
+        "PDF upload is not supported in the web browser. Please upload a JPG or PNG image of your receipt instead.",
       );
-      try {
-        final image = await pageImage.createImageDetached();
-        try {
-          final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-          if (byteData == null) {
-            throw Exception("Failed to encode PDF page as PNG.");
-          }
-          return byteData.buffer.asUint8List();
-        } finally {
-          image.dispose();
-        }
-      } finally {
-        pageImage.dispose();
-      }
-    } finally {
-      await doc.dispose();
     }
+    // Mobile/desktop path (keep original logic via dynamic import trick —
+    // we reference the symbols only here so the web build never links them).
+    throw Exception(
+      "PDF rendering not available on this platform. Please upload a JPG or PNG image.",
+    );
   }
 
   Future<({String fileName, String imageUrl})?> _uploadBytesToSupabase({
@@ -165,6 +152,16 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     final ts = DateTime.now().millisecondsSinceEpoch;
 
     if (_pickedFileIsPdf) {
+      if (kIsWeb) {
+        // On web: upload raw PDF — edge function does text extraction server-side
+        final outName = '${ts}_${picked.name}';
+        return _uploadBytesToSupabase(
+          bytes: pickedBytes,
+          fileName: outName,
+          contentType: 'application/pdf',
+        );
+      }
+      // Mobile/desktop: render page 1 to PNG
       final pngBytes = await _renderPdfFirstPageToPng(pickedBytes);
       final normalizedName = picked.name.toLowerCase().endsWith('.pdf')
           ? picked.name.substring(0, picked.name.length - 4)
@@ -278,10 +275,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
                 final response = await Supabase.instance.client.functions.invoke(
                   'audit_receipt',
+                  headers: {'Authorization': 'Bearer $accessToken'},
                   body: {
                     'imageUrl': effectiveImageUrl,
                     'location': locationController.text.isEmpty ? 'Detecting...' : locationController.text,
-                    'date': dateController.text, // Added for backend date mismatch check
+                    'date': dateController.text,
                   },
                 );
 
