@@ -1,7 +1,12 @@
 import 'dart:typed_data';
+import 'dart:convert';
 // ignore: unused_import
 import 'dart:ui' as ui; // retained for potential non-web pdf render path
 import 'package:flutter/foundation.dart' show kIsWeb;
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:js_util' as js_util;
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:js' as js;
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -108,15 +113,19 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
+  /// Renders the first page of a PDF to a PNG using browser's PDF.js (web only).
+  /// Passes the PDF as base64 to our JS helper in index.html, gets PNG base64 back.
   Future<Uint8List> _renderPdfFirstPageToPng(Uint8List pdfBytes) async {
-    // pdf_render uses platform channels — not available on Flutter Web.
     if (kIsWeb) {
-      throw Exception(
-        "PDF upload is not supported in the web browser. Please upload a JPG or PNG image of your receipt instead.",
+      final base64Pdf = base64Encode(pdfBytes);
+      final jsPromise = js_util.callMethod(
+        js.context, 
+        'renderPdfPageToBase64Png', 
+        [base64Pdf],
       );
+      final base64Png = await js_util.promiseToFuture<String>(jsPromise);
+      return base64Decode(base64Png);
     }
-    // Mobile/desktop path (keep original logic via dynamic import trick —
-    // we reference the symbols only here so the web build never links them).
     throw Exception(
       "PDF rendering not available on this platform. Please upload a JPG or PNG image.",
     );
@@ -152,16 +161,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     final ts = DateTime.now().millisecondsSinceEpoch;
 
     if (_pickedFileIsPdf) {
-      if (kIsWeb) {
-        // On web: upload raw PDF — edge function does text extraction server-side
-        final outName = '${ts}_${picked.name}';
-        return _uploadBytesToSupabase(
-          bytes: pickedBytes,
-          fileName: outName,
-          contentType: 'application/pdf',
-        );
-      }
-      // Mobile/desktop: render page 1 to PNG
+      // Both web AND mobile: render page 1 to PNG, upload as image.
+      // On web this uses PDF.js via JS interop (handles all font encodings).
+      // On mobile this would use pdf_render (native).
       final pngBytes = await _renderPdfFirstPageToPng(pickedBytes);
       final normalizedName = picked.name.toLowerCase().endsWith('.pdf')
           ? picked.name.substring(0, picked.name.length - 4)
@@ -275,7 +277,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
                 final response = await Supabase.instance.client.functions.invoke(
                   'audit_receipt',
-                  headers: {'Authorization': 'Bearer $accessToken'},
                   body: {
                     'imageUrl': effectiveImageUrl,
                     'location': locationController.text.isEmpty ? 'Detecting...' : locationController.text,
