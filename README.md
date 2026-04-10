@@ -34,7 +34,7 @@ Create a file named `.env` inside the `assets/` folder and paste the following t
 
 \`\`\`env
 SUPABASE_URL=https://zcxgrnwpdlvovgotjwgl.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5c... (paste your actual anon key here)
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjeGdybndwZGx2b3Znb3Rqd2dsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTIxNzMsImV4cCI6MjA4OTgyODE3M30.LmblWiM-8pMyfSsUJllCtZ9KzAc72mZ9OaCPMs2enT0
 \`\`\`
 
 ### 3. Build and Spin Up the Container:
