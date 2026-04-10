@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 // ignore: unused_import
 import 'dart:ui' as ui; // retained for potential non-web pdf render path
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:js_util' as js_util;
 // ignore: avoid_web_libraries_in_flutter
@@ -118,13 +118,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Future<Uint8List> _renderPdfFirstPageToPng(Uint8List pdfBytes) async {
     if (kIsWeb) {
       final base64Pdf = base64Encode(pdfBytes);
-      final jsPromise = js_util.callMethod(
-        js.context, 
-        'renderPdfPageToBase64Png', 
-        [base64Pdf],
-      );
-      final base64Png = await js_util.promiseToFuture<String>(jsPromise);
-      return base64Decode(base64Png);
+      debugPrint('Calling PDF.js renderPdfPageToBase64Png, pdf size: ${pdfBytes.length} bytes');
+      try {
+        final jsPromise = js_util.callMethod(
+          js.context,
+          'renderPdfPageToBase64Png',
+          [base64Pdf],
+        );
+        final base64Jpeg = await js_util.promiseToFuture<String>(jsPromise);
+        debugPrint('PDF.js render success, jpeg base64 length: ${base64Jpeg.length}');
+        return base64Decode(base64Jpeg);
+      } catch (jsErr) {
+        debugPrint('PDF.js render failed: $jsErr');
+        throw Exception('PDF render failed: $jsErr');
+      }
     }
     throw Exception(
       "PDF rendering not available on this platform. Please upload a JPG or PNG image.",
@@ -294,9 +301,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                   effectiveSnippet = data['policy_snippet'] ?? 'N/A';
                   aiCompleted = true;
                 });
-              } catch (e) {
+              } catch (e, stack) {
+                // Always surface the real error so it's visible in the UI
+                debugPrint('AI audit error: $e');
+                debugPrint('Stack: $stack');
                 if (mounted) {
-                  String reason = "AI Analysis failed. Please enter manually.";
+                  String reason;
                   if (e is FunctionException) {
                     final detailsText = e.details.toString().trim();
                     final reasonPhraseText = e.reasonPhrase.toString().trim();
@@ -304,7 +314,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                         ? detailsText
                         : (reasonPhraseText.isNotEmpty ? reasonPhraseText : 'Unauthorized or server error');
                     reason = "AI call failed (${e.status}): $message";
-                  } else if (e is Exception) {
+                  } else {
+                    // Show the raw error — never hide it as "please enter manually"
                     reason = e.toString().replaceFirst("Exception: ", "");
                   }
                   setModalState(() {
