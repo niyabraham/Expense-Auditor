@@ -28,3 +28,7 @@ doc/api/
 .flutter-plugins
 .flutter-plugins-dependencies
 .env
+
+# Ignored from package.json in root
+node_modules/
+package-lock.json
