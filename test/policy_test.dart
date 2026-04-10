@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:expense_auditor/policy_data.dart';
+import 'package:expense_auditor/data/policy_data.dart';
 
 void main() {
   group('Enterprise Policy Tests', () {
