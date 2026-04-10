@@ -5,8 +5,6 @@ import 'dart:ui' as ui; // retained for potential non-web pdf render path
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:js_util' as js_util;
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:js' as js;
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -120,8 +118,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       final base64Pdf = base64Encode(pdfBytes);
       debugPrint('Calling PDF.js renderPdfPageToBase64Png, pdf size: ${pdfBytes.length} bytes');
       try {
+        // Use js_util.globalThis (= window) — more reliable than dart:js context
         final jsPromise = js_util.callMethod(
-          js.context,
+          js_util.globalThis,
           'renderPdfPageToBase64Png',
           [base64Pdf],
         );
