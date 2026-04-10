@@ -23,24 +23,51 @@
     }
   </script>
 
-  <!-- PDF.js: renders PDF page 1 to a size-capped JPEG in the browser -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     /**
-     * Called from Flutter via dart:js_util interop.
-     * Renders page 1 of a PDF to a JPEG and returns it as a base64 string.
+     * Renders page 1 of a PDF to a JPEG and returns base64 string.
+     * PDF.js is loaded on-demand via dynamic import() so it is
+     * guaranteed to be ready before use — no race with flutter_bootstrap.js.
      *
-     * Deliberately kept small (max 1200px on longest side, 0.85 JPEG quality)
-     * so the resulting file stays under ~200KB — safe for Supabase edge function
-     * memory limits and Groq's vision API.
+     * Called from Flutter via dart:js_util:
+     *   js_util.callMethod(js.context, 'renderPdfPageToBase64Png', [base64Pdf])
      *
-     * @param {string} pdfBase64 - PDF bytes encoded as base64.
-     * @returns {Promise<string>} JPEG bytes as base64 (no data URI prefix).
+     * @param {string} pdfBase64 - PDF bytes as base64.
+     * @returns {Promise<string>} JPEG bytes as base64 (no data-URI prefix).
      */
-    async function renderPdfPageToBase64Png(pdfBase64) {
-      const pdfjsLib = window['pdfjs-dist/build/pdf'];
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    window.renderPdfPageToBase64Png = async function(pdfBase64) {
+      // Load PDF.js on first call and cache it on window
+      if (!window._pdfjsLib) {
+        // Load the script dynamically so it is always ready before use
+        await new Promise(function(resolve, reject) {
+          if (document.querySelector('script[data-pdfjs]')) {
+            // Already injected — wait for it to finish
+            const check = setInterval(function() {
+              if (window['pdfjs-dist/build/pdf']) {
+                clearInterval(check);
+                resolve();
+              }
+            }, 50);
+            return;
+          }
+          const s = document.createElement('script');
+          s.setAttribute('data-pdfjs', '1');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = function() {
+            const lib = window['pdfjs-dist/build/pdf'];
+            if (!lib) { reject(new Error('PDF.js loaded but window["pdfjs-dist/build/pdf"] is undefined')); return; }
+            lib.GlobalWorkerOptions.workerSrc =
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            window._pdfjsLib = lib;
+            resolve();
+          };
+          s.onerror = function() { reject(new Error('Failed to load PDF.js from CDN')); };
+          document.head.appendChild(s);
+        });
+      }
+
+      const pdfjsLib = window._pdfjsLib;
+      if (!pdfjsLib) throw new Error('PDF.js unavailable after load attempt');
 
       // Decode base64 → Uint8Array
       const binaryStr = atob(pdfBase64);
@@ -50,27 +77,26 @@
       const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
       const page = await pdf.getPage(1);
 
-      // Scale so the longest side is at most 1200px — keeps file size small
+      // Scale so longest side ≤ 1200px — keeps output under ~200 KB
       const MAX_PX = 1200;
-      const naturalViewport = page.getViewport({ scale: 1.0 });
-      const longestSide = Math.max(naturalViewport.width, naturalViewport.height);
-      const scale = Math.min(1.5, MAX_PX / longestSide); // never upscale beyond 1.5x
-      const viewport = page.getViewport({ scale });
+      const naturalVp = page.getViewport({ scale: 1.0 });
+      const longest = Math.max(naturalVp.width, naturalVp.height);
+      const scale = Math.min(1.5, MAX_PX / longest);
+      const viewport = page.getViewport({ scale: scale });
 
       const canvas = document.createElement('canvas');
       canvas.width  = Math.round(viewport.width);
       canvas.height = Math.round(viewport.height);
 
       const ctx = canvas.getContext('2d');
-      // White background so JPEG has no transparency artefacts
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
-      // JPEG at 0.85 quality ≈ 5–10× smaller than PNG — critical for edge fn limits
+      // JPEG 0.85 quality ≈ 5–10× smaller than PNG
       return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-    }
+    };
   </script>
 
   <script src="flutter_bootstrap.js" async></script>
