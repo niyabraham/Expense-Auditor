@@ -228,6 +228,15 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
+  static String _currencySymbol(String code) {
+    const symbols = {
+      'USD': '\$', 'INR': '₹', 'GBP': '£', 'EUR': '€',
+      'JPY': '¥', 'CNY': '¥', 'CAD': 'CA\$', 'AUD': 'A\$',
+      'CHF': 'Fr', 'SGD': 'S\$', 'AED': 'د.إ', 'SAR': '﷼',
+    };
+    return symbols[code.toUpperCase()] ?? code;
+  }
+
   void _showAddExpenseForm(
     String initMerchant, 
     double initAmount, 
@@ -338,7 +347,15 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 const SizedBox(height: 16),
                 TextField(controller: merchantController, decoration: const InputDecoration(labelText: 'Merchant')),
                 const SizedBox(height: 12),
-                TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+                TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Amount',
+                    prefixText: aiCompleted ? '${_currencySymbol(effectiveCurrency)} ' : null,
+                    prefixStyle: const TextStyle(color: AppTheme.foreground, fontWeight: FontWeight.bold),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: dateController, 
