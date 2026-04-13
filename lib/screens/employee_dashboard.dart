@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 import 'dart:convert';
+// ignore: unused_import
+import 'dart:ui' as ui; // retained for potential non-web pdf render path
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:js_util' as js_util;
@@ -190,7 +192,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
   Future<void> _finalizeDatabaseInsert(
     String merchant, double amount, String date, String location, String justification, 
-    String aiStatus, String aiReason, String aiSnippet, String imageUrl
+    String aiStatus, String aiReason, String aiSnippet, String imageUrl, String currency
   ) async {
     setState(() => _isUploading = true);
     try {
@@ -202,7 +204,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         'expense_date': date,
         'location': location,
         'justification': justification,
-        'currency': 'USD',
+        'currency': currency,
         'status': aiStatus,
         'audit_reason': aiReason,
         'policy_snippet': aiSnippet,
@@ -245,6 +247,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     String effectiveReason = aiReason;
     String effectiveSnippet = aiSnippet;
     String effectiveImageUrl = imageUrl;
+    String effectiveCurrency = 'USD';
     String? uploadedFileName;
 
     bool aiStarted = false;
@@ -286,7 +289,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     'location': locationController.text.isEmpty ? 'Detecting...' : locationController.text,
                     'date': dateController.text,
                   },
-                  headers: {'Authorization': 'Bearer $accessToken'},
                 );
 
                 final data = response.data;
@@ -297,6 +299,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                   effectiveStatus = data['status'] ?? 'flagged';
                   effectiveReason = data['reason'] ?? 'Manual check required';
                   effectiveSnippet = data['policy_snippet'] ?? 'N/A';
+                  effectiveCurrency = data['currency_code'] ?? 'USD';
                   aiCompleted = true;
                 });
               } catch (e, stack) {
@@ -378,6 +381,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                               effectiveReason,
                               effectiveSnippet,
                               effectiveImageUrl,
+                              effectiveCurrency,
                             );
                           },
                     child: aiCompleted
