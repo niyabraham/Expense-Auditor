@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 import 'dart:convert';
-// ignore: unused_import
-import 'dart:ui' as ui; // retained for potential non-web pdf render path
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:js_util' as js_util;
@@ -288,6 +286,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     'location': locationController.text.isEmpty ? 'Detecting...' : locationController.text,
                     'date': dateController.text,
                   },
+                  headers: {'Authorization': 'Bearer $accessToken'},
                 );
 
                 final data = response.data;
